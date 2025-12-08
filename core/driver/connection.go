@@ -12,12 +12,12 @@ type PGPool struct {
 }
 
 func Connect(dsn string) (*PGPool, error) {
-	cfg,err:=pgxpool.ParseConfig(dsn)
-	if err!=nil{
-		return nil,err
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
 	}
-	cfg.MaxConns=10
-		// Baseline defaults — will tune later
+
+	// Connection pool configuration
 	cfg.MaxConns = 20
 	cfg.MinConns = 5
 	cfg.MaxConnIdleTime = 5 * time.Minute
@@ -26,7 +26,16 @@ func Connect(dsn string) (*PGPool, error) {
 
 	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
-		return nil, err	
+		return nil, err
+	}
+
+	// Test the connection immediately
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, err
 	}
 
 	return &PGPool{Pool: pool}, nil

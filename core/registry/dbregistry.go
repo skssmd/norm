@@ -231,3 +231,61 @@ func (s *ShardBuilder) Standalone() error {
 	s.reg.mode = "shard"
 	return nil
 }
+
+// --- Registry Info Functions ---
+
+// GetRegistryInfo returns information about the current registry state
+func GetRegistryInfo() map[string]interface{} {
+	norm.mu.RLock()
+	defer norm.mu.RUnlock()
+
+	info := make(map[string]interface{})
+	info["mode"] = norm.mode
+
+	// Global pools
+	globalPools := make([]string, 0)
+	for poolName := range norm.pools {
+		globalPools = append(globalPools, poolName)
+	}
+	info["global_pools"] = globalPools
+
+	// Shard info
+	shardInfo := make(map[string]map[string]interface{})
+	for shardName, shardPools := range norm.shards {
+		sInfo := make(map[string]interface{})
+		sInfo["has_primary"] = shardPools.primary != nil
+
+		standaloneKeys := make([]string, 0)
+		for key := range shardPools.standalone {
+			standaloneKeys = append(standaloneKeys, key)
+		}
+		sInfo["standalone_pools"] = standaloneKeys
+
+		shardInfo[shardName] = sInfo
+	}
+	info["shards"] = shardInfo
+
+	return info
+}
+
+// GetPoolCount returns the total number of connection pools
+func GetPoolCount() int {
+	norm.mu.RLock()
+	defer norm.mu.RUnlock()
+
+	count := len(norm.pools)
+	for _, shardPools := range norm.shards {
+		if shardPools.primary != nil {
+			count++
+		}
+		count += len(shardPools.standalone)
+	}
+	return count
+}
+
+// GetMode returns the current registry mode
+func GetMode() string {
+	norm.mu.RLock()
+	defer norm.mu.RUnlock()
+	return norm.mode
+}

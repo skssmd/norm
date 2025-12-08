@@ -30,3 +30,6 @@ Thumbs.db
 
 # Project planning (personal notes)
 PROJECT_PLAN.md
+
+# Environment variables
+.env
