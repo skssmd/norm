@@ -196,6 +196,11 @@ func (s *ShardBuilder) Primary() error {
 		return errors.New("primary pool for shard already exists")
 	}
 
+	// Check if standalone pools already exist for this shard
+	if len(s.reg.shards[s.shardName].standalone) > 0 {
+		return fmt.Errorf("cannot register primary for shard '%s': standalone pools already exist (shard cannot be both primary and standalone)", s.shardName)
+	}
+
 	pool, err := driver.Connect(s.dsn)
 	if err != nil {
 		return err
@@ -220,6 +225,11 @@ func (s *ShardBuilder) Standalone() error {
 		}
 	}
 
+	// Check if primary pool already exists for this shard
+	if s.reg.shards[s.shardName].primary != nil {
+		return fmt.Errorf("cannot register standalone for shard '%s': primary pool already exists (shard cannot be both primary and standalone)", s.shardName)
+	}
+
 	pool, err := driver.Connect(s.dsn)
 	if err != nil {
 		return err
@@ -242,24 +252,26 @@ func GetRegistryInfo() map[string]interface{} {
 	info := make(map[string]interface{})
 	info["mode"] = norm.mode
 
-	// Global pools
-	globalPools := make([]string, 0)
-	for poolName := range norm.pools {
-		globalPools = append(globalPools, poolName)
+	// Global pools (with actual pool references)
+	globalPools := make(map[string]interface{})
+	for poolName, pool := range norm.pools {
+		globalPools[poolName] = pool
 	}
-	info["global_pools"] = globalPools
+	info["pools"] = globalPools
 
-	// Shard info
-	shardInfo := make(map[string]map[string]interface{})
+	// Shard info (with actual pool references)
+	shardInfo := make(map[string]interface{})
 	for shardName, shardPools := range norm.shards {
 		sInfo := make(map[string]interface{})
 		sInfo["has_primary"] = shardPools.primary != nil
+		sInfo["primary_pool"] = shardPools.primary
 
-		standaloneKeys := make([]string, 0)
-		for key := range shardPools.standalone {
-			standaloneKeys = append(standaloneKeys, key)
+		// Return actual pool references for standalone pools
+		standalonePools := make(map[string]*driver.PGPool)
+		for key, pool := range shardPools.standalone {
+			standalonePools[key] = pool
 		}
-		sInfo["standalone_pools"] = standaloneKeys
+		sInfo["standalone_pools"] = standalonePools
 
 		shardInfo[shardName] = sInfo
 	}

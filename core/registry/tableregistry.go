@@ -10,6 +10,7 @@ import (
 // TableRegistry holds table-to-shard mappings
 type TableRegistry struct {
 	tables map[string]*TableShardMapping // tableName => shardName & role
+	models map[string]interface{}        // tableName => model struct
 	mu     sync.RWMutex
 }
 
@@ -22,6 +23,7 @@ type TableShardMapping struct {
 // global table registry singleton
 var tableReg = &TableRegistry{
 	tables: make(map[string]*TableShardMapping),
+	models: make(map[string]interface{}),
 }
 
 // TableBuilder for fluent API
@@ -30,11 +32,44 @@ type TableBuilder struct {
 }
 
 // Table registers a table and returns a builder for configuration
+// Also stores the model for auto-migration
+// In global mode, tables are automatically registered as global
+// In shard mode, you must call .Shard("name").Primary() or .Shard("name").Standalone()
 func Table(model interface{}) *TableBuilder {
 	tableName := getTableName(model)
+
+	// Store model in registry
+	tableReg.mu.Lock()
+	tableReg.models[tableName] = model
+
+	// Auto-register as global if in global mode
+	dbMode := GetMode()
+	if dbMode == "" || dbMode == "global" {
+		if _, exists := tableReg.tables[tableName]; !exists {
+			tableReg.tables[tableName] = &TableShardMapping{
+				shardName: "",
+				role:      "",
+			}
+		}
+	}
+	tableReg.mu.Unlock()
+
+	// Register model for auto-migration callback
+	registerModelForMigration(model)
+
 	return &TableBuilder{
 		tableName: tableName,
 	}
+}
+
+// registerModelForMigration is a placeholder that will be set by norm package
+var registerModelForMigration = func(model interface{}) {
+	// This will be overridden by norm package init
+}
+
+// SetModelRegistrationCallback sets the callback for model registration
+func SetModelRegistrationCallback(callback func(interface{})) {
+	registerModelForMigration = callback
 }
 
 // getTableName extracts table name from struct
@@ -44,28 +79,6 @@ func getTableName(model interface{}) string {
 		t = t.Elem()
 	}
 	return t.Name()
-}
-
-// Global registers table to use global pools
-func (tb *TableBuilder) Global() error {
-	tableReg.mu.Lock()
-	defer tableReg.mu.Unlock()
-
-	// Check if DB registry mode is shard
-	dbMode := GetMode()
-	if dbMode == "shard" {
-		return fmt.Errorf("cannot register table as global when DB registry mode is 'shard'")
-	}
-
-	if _, exists := tableReg.tables[tb.tableName]; exists {
-		return fmt.Errorf("table %s already registered", tb.tableName)
-	}
-
-	tableReg.tables[tb.tableName] = &TableShardMapping{
-		shardName: "",
-		role:      "",
-	}
-	return nil
 }
 
 // TableShardBuilder for shard-specific configuration
@@ -179,5 +192,18 @@ func UnregisterTable(tableName string) error {
 	}
 
 	delete(tableReg.tables, tableName)
+	delete(tableReg.models, tableName)
 	return nil
+}
+
+// GetAllModels returns all registered model structs
+func GetAllModels() []interface{} {
+	tableReg.mu.RLock()
+	defer tableReg.mu.RUnlock()
+
+	models := make([]interface{}, 0, len(tableReg.models))
+	for _, model := range tableReg.models {
+		models = append(models, model)
+	}
+	return models
 }
