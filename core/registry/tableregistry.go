@@ -31,22 +31,28 @@ type TableBuilder struct {
 	tableName string
 }
 
-// Table registers a table and returns a builder for configuration
-// Also stores the model for auto-migration
-// In global mode, tables are automatically registered as global
-// In shard mode, you must call .Shard("name").Primary() or .Shard("name").Standalone()
-func Table(model interface{}) *TableBuilder {
-	tableName := getTableName(model)
+// Table registers a table with the ORM for migrations and routing
+// Usage:
+//
+//	Table(User{}, "users")  // With custom table name
+//	Table(User{})           // Auto-generate from struct name
+func Table(model interface{}, tableName ...string) *TableBuilder {
+	var name string
+	if len(tableName) > 0 && tableName[0] != "" {
+		name = tableName[0]
+	} else {
+		name = getTableName(model)
+	}
 
 	// Store model in registry
 	tableReg.mu.Lock()
-	tableReg.models[tableName] = model
+	tableReg.models[name] = model
 
 	// Auto-register as global if in global mode
 	dbMode := GetMode()
 	if dbMode == "" || dbMode == "global" {
-		if _, exists := tableReg.tables[tableName]; !exists {
-			tableReg.tables[tableName] = &TableShardMapping{
+		if _, exists := tableReg.tables[name]; !exists {
+			tableReg.tables[name] = &TableShardMapping{
 				shardName: "",
 				role:      "",
 			}
@@ -58,7 +64,7 @@ func Table(model interface{}) *TableBuilder {
 	registerModelForMigration(model)
 
 	return &TableBuilder{
-		tableName: tableName,
+		tableName: name,
 	}
 }
 
@@ -79,6 +85,35 @@ func getTableName(model interface{}) string {
 		t = t.Elem()
 	}
 	return t.Name()
+}
+
+// GetRegisteredTableName looks up the registered table name for a model
+// Returns the registered table name if found, otherwise returns empty string
+func GetRegisteredTableName(model interface{}) string {
+	t := reflect.TypeOf(model)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	modelType := t
+
+	tableReg.mu.RLock()
+	defer tableReg.mu.RUnlock()
+
+	// Search for matching model type in registry
+	for tableName, registeredModel := range tableReg.models {
+		registeredType := reflect.TypeOf(registeredModel)
+		if registeredType.Kind() == reflect.Ptr {
+			registeredType = registeredType.Elem()
+		}
+
+		// Compare types
+		if registeredType == modelType {
+			return tableName
+		}
+	}
+
+	return ""
 }
 
 // TableShardBuilder for shard-specific configuration

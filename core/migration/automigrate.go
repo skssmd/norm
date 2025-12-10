@@ -9,6 +9,7 @@ import (
 
 	"github.com/skssmd/norm/core/driver"
 	"github.com/skssmd/norm/core/registry"
+	"github.com/skssmd/norm/core/utils"
 )
 
 // AutoMigrator handles automatic schema migration from structs
@@ -280,15 +281,11 @@ func (am *AutoMigrator) getModelsForShard(shardName string) []interface{} {
 	var shardModels []interface{}
 
 	for _, model := range am.models {
-		// Get struct name (not pluralized table name)
-		t := reflect.TypeOf(model)
-		if t.Kind() == reflect.Ptr {
-			t = t.Elem()
-		}
-		structName := t.Name()
+		// Get the registered table name for this model
+		tableName := getTableNameFromStruct(model)
 
-		// Get table mapping using struct name
-		mapping, err := registry.GetTableMapping(structName)
+		// Try to get table mapping using the table name
+		mapping, err := registry.GetTableMapping(tableName)
 		if err != nil {
 			continue // Skip if not found
 		}
@@ -421,7 +418,7 @@ func (am *AutoMigrator) addIndexesAndConstraints(ctx context.Context, pool *driv
 
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		colName := toSnakeCase(field.Name)
+		colName := utils.ToSnakeCase(field.Name)
 		normTag := field.Tag.Get("norm")
 		tags := parseNormTags(normTag)
 
@@ -434,7 +431,16 @@ func (am *AutoMigrator) addIndexesAndConstraints(ctx context.Context, pool *driv
 			}
 		}
 
-		// Add foreign key if specified
+		// Add index for soft key (application-level relationship)
+		if _, ok := tags["skey"]; ok {
+			indexName := fmt.Sprintf("idx_%s_%s", tableName, colName)
+			indexSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s(%s);", indexName, tableName, colName)
+			if _, err := pool.Pool.Exec(ctx, indexSQL); err != nil && !strings.Contains(err.Error(), "already exists") {
+				fmt.Printf("    ⚠️  Failed to create index '%s': %v\n", indexName, err)
+			}
+		}
+
+		// Add foreign key if specified (database-level constraint)
 		if fkey, ok := tags["fkey"]; ok {
 			fkParts := strings.Split(fkey.(string), ".")
 			if len(fkParts) == 2 {
@@ -503,7 +509,7 @@ func (am *AutoMigrator) parseStructColumns(model interface{}) map[string]string 
 
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		colName := toSnakeCase(field.Name)
+		colName := utils.ToSnakeCase(field.Name)
 		colType := am.getPostgresType(field)
 
 		columns[colName] = colType
@@ -531,7 +537,7 @@ func (am *AutoMigrator) generateCreateTableSQL(model interface{}, tableName stri
 
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		colName := toSnakeCase(field.Name)
+		colName := utils.ToSnakeCase(field.Name)
 		colType := am.getPostgresType(field)
 
 		// Parse norm tags
@@ -540,13 +546,21 @@ func (am *AutoMigrator) generateCreateTableSQL(model interface{}, tableName stri
 
 		colDef := fmt.Sprintf("  %s %s", colName, colType)
 
+		// Handle primary key - make it auto-incrementing
+		if _, ok := tags["pk"]; ok {
+			// For integer types, use SERIAL/BIGSERIAL for auto-increment
+			switch colType {
+			case "INTEGER":
+				colDef = fmt.Sprintf("  %s SERIAL", colName)
+			case "BIGINT":
+				colDef = fmt.Sprintf("  %s BIGSERIAL", colName)
+			}
+			primaryKeys = append(primaryKeys, colName)
+		}
+
 		// Handle constraints
 		if _, ok := tags["notnull"]; ok {
 			colDef += " NOT NULL"
-		}
-
-		if _, ok := tags["pk"]; ok {
-			primaryKeys = append(primaryKeys, colName)
 		}
 
 		if _, ok := tags["unique"]; ok {
@@ -559,7 +573,7 @@ func (am *AutoMigrator) generateCreateTableSQL(model interface{}, tableName stri
 
 		columnDefs = append(columnDefs, colDef)
 
-		// Handle foreign keys
+		// Handle foreign keys (database-level constraint)
 		if fkey, ok := tags["fkey"]; ok {
 			fkParts := strings.Split(fkey.(string), ".")
 			if len(fkParts) == 2 {
@@ -577,6 +591,17 @@ func (am *AutoMigrator) generateCreateTableSQL(model interface{}, tableName stri
 					fmt.Sprintf("  FOREIGN KEY (%s) REFERENCES %s(%s) ON DELETE %s ON UPDATE %s",
 						colName, fkParts[0], fkParts[1], onDelete, onUpdate))
 			}
+		}
+
+		// Handle soft keys (application-level relationship, no DB constraint)
+		// skey creates an indexed column for logical foreign key relationships
+		// Supports ondelete:cascade|setnull for application-level behavior
+		if skey, ok := tags["skey"]; ok {
+			_ = skey // Store metadata for application-level cascade/setnull
+			// Create index for soft key (improves query performance)
+			indexes = append(indexes,
+				fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_%s ON %s(%s);",
+					tableName, colName, tableName, colName))
 		}
 
 		// Handle indexes
@@ -616,14 +641,20 @@ func (am *AutoMigrator) getPostgresType(field reflect.StructField) string {
 		return sqlType.(string)
 	}
 
+	// Handle pointer types (nullable fields)
+	fieldType := field.Type
+	if fieldType.Kind() == reflect.Ptr {
+		fieldType = fieldType.Elem()
+	}
+
 	// Map Go types to PostgreSQL types
-	switch field.Type.Kind() {
+	switch fieldType.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32:
 		return "INTEGER"
 	case reflect.Int64:
 		return "BIGINT"
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32:
-		return "INTEGER"
+		return "BIGINT"
 	case reflect.Uint64:
 		return "BIGINT"
 	case reflect.Float32:
@@ -644,15 +675,47 @@ func (am *AutoMigrator) getPostgresType(field reflect.StructField) string {
 		// Default to VARCHAR(255)
 		return "VARCHAR(255)"
 	case reflect.Struct:
-		// Handle time.Time
-		if field.Type.String() == "time.Time" {
+		// Handle time.Time (including *time.Time)
+		typeName := fieldType.String()
+		if typeName == "time.Time" {
 			return "TIMESTAMP"
 		}
+		// All other structs default to JSONB
 		return "JSONB"
 	case reflect.Slice:
-		if field.Type.Elem().Kind() == reflect.Uint8 {
+		// Handle []byte as BYTEA
+		if fieldType.Elem().Kind() == reflect.Uint8 {
 			return "BYTEA"
 		}
+
+		// Check for explicit array type tag (e.g., norm:"type:TEXT[]")
+		// This allows PostgreSQL native arrays
+
+		// Map Go slice types to PostgreSQL arrays
+		elemKind := fieldType.Elem().Kind()
+		switch elemKind {
+		case reflect.String:
+			return "TEXT[]" // PostgreSQL text array
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32:
+			return "INTEGER[]" // PostgreSQL integer array
+		case reflect.Int64:
+			return "BIGINT[]" // PostgreSQL bigint array
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32:
+			return "BIGINT[]" // PostgreSQL bigint array
+		case reflect.Uint64:
+			return "BIGINT[]" // PostgreSQL bigint array
+		case reflect.Float32:
+			return "REAL[]" // PostgreSQL real array
+		case reflect.Float64:
+			return "DOUBLE PRECISION[]" // PostgreSQL double precision array
+		case reflect.Bool:
+			return "BOOLEAN[]" // PostgreSQL boolean array
+		default:
+			// Complex types (structs, nested slices) → JSONB
+			return "JSONB"
+		}
+	case reflect.Map:
+		// Maps are stored as JSONB
 		return "JSONB"
 	default:
 		return "TEXT"
@@ -684,8 +747,18 @@ func parseNormTags(tag string) map[string]interface{} {
 	return tags
 }
 
-// getTableNameFromStruct derives table name from struct name
+// getTableNameFromStruct determines the table name for a model.
+// It first prefers the explicitly registered table name from the registry,
+// and only falls back to deriving from the struct name (snake_case + plural)
+// when no registration is found. This keeps migrations consistent with
+// RegisterTable(.., "custom_name").
 func getTableNameFromStruct(model interface{}) string {
+	// Prefer explicit registration from the table registry
+	if registered := registry.GetRegisteredTableName(model); registered != "" {
+		return registered
+	}
+
+	// Fallback: derive from struct name
 	t := reflect.TypeOf(model)
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
@@ -693,32 +766,6 @@ func getTableNameFromStruct(model interface{}) string {
 
 	name := t.Name()
 	// Convert to snake_case and pluralize
-	snakeName := toSnakeCase(name)
-	return pluralize(snakeName)
-}
-
-// toSnakeCase converts CamelCase to snake_case
-func toSnakeCase(s string) string {
-	var result strings.Builder
-	for i, r := range s {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			// Check if previous character was not uppercase (avoid I_D from ID)
-			if i > 0 && s[i-1] >= 'a' && s[i-1] <= 'z' {
-				result.WriteRune('_')
-			}
-		}
-		result.WriteRune(r)
-	}
-	return strings.ToLower(result.String())
-}
-
-// pluralize adds 's' to make plural (simple version)
-func pluralize(s string) string {
-	if strings.HasSuffix(s, "s") {
-		return s + "es"
-	}
-	if strings.HasSuffix(s, "y") {
-		return s[:len(s)-1] + "ies"
-	}
-	return s + "s"
+	snakeName := utils.ToSnakeCase(name)
+	return utils.Pluralize(snakeName)
 }

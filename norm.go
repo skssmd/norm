@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/skssmd/norm/core/engine"
 	"github.com/skssmd/norm/core/migration"
 	"github.com/skssmd/norm/core/registry"
 )
@@ -25,12 +26,41 @@ func Register(dsn string) *registry.ConnBuilder {
 // Table Registration
 // ============================================================
 
-// Table registers a table model for migration and routing
-// In global mode, tables are automatically registered as global
-// In shard mode, you must call .Shard("name").Primary() or .Shard("name").Standalone()
-func Table(model interface{}) *registry.TableBuilder {
-	return registry.Table(model)
+// RegisterTable registers a table with the ORM for migrations and routing
+// Usage:
+//
+//	norm.RegisterTable(User{}, "users").Shard("shard1").Primary()
+//	norm.RegisterTable(User{}).Shard("shard1").Primary()  // Auto-generate table name
+func RegisterTable(model interface{}, tableName ...string) *registry.TableBuilder {
+	return registry.Table(model, tableName...)
 }
+
+// ============================================================
+// Query Builder Functions
+// ============================================================
+
+// Table creates a query builder for the specified table or model
+// Usage:
+//
+//	norm.Table("users").Select("id", "name", "email")  // String-based
+//	norm.Table(User{Name: "John", Email: "john@example.com"}).Insert()  // Struct-based (ignores zero values)
+func Table(tableNameOrModel interface{}) *engine.Query {
+	q := &engine.Query{}
+	return q.Table(tableNameOrModel)
+}
+
+// BulkInsert creates a bulk insert builder from model
+// Usage:
+//
+//	norm.BulkInsert(User{}, []string{"name", "email"}, [][]interface{}{{"John", "john@example.com"}, {"Jane", "jane@example.com"}})
+func BulkInsert(model interface{}, columns []string, rows [][]interface{}) *engine.BulkInsertBuilder {
+	return engine.BulkInsert(model, columns, rows)
+}
+
+// Removed F() helper - use field pointers or string literals instead
+// Recommended approaches:
+// 1. Field pointers: From(user).Select(&user.Name, &user.Email)
+// 2. String literals: From(user).Select("name", "email")
 
 // ============================================================
 // Migration Functions
@@ -61,9 +91,6 @@ func DropTables() error {
 }
 
 // NewMigrator creates a new migrator for table creation
-func NewMigrator() *migration.Migrator {
-	return migration.NewMigrator()
-}
 
 func Norm() {
 	// Initialize auto migrator AFTER tables are registered

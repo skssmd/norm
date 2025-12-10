@@ -11,18 +11,19 @@ import (
 
 // Example table structs for testing
 type User struct {
-	ID        int       `norm:"index;notnull;pk"`
-	Email     string    `norm:"unique;notnull"` // VARCHAR(255) - default
-	Name      string    `norm:"notnull"`        // VARCHAR(255) - default
-	Username  string    `norm:"notnull;unique"` // VARCHAR(255) - default
-	Bio       string    `norm:"text"`           // TEXT - explicit text tag
-	CreatedAt time.Time `norm:"notnull;default:NOW()"`
-	UpdatedAt time.Time `norm:"notnull;default:NOW()"`
+	ID        uint       `norm:"index;notnull;pk"`
+	Email     string     `norm:"unique;notnull"` // VARCHAR(255) - default
+	Name      string     `norm:"notnull"`        // VARCHAR(255) - default
+	Username  string     `norm:"notnull;unique"` // VARCHAR(255) - default
+	Bio       *string    `norm:"text"`           // TEXT - nullable (pointer)
+	Age       *uint      `norm:""`               // BIGINT - nullable (pointer)
+	CreatedAt time.Time  `norm:"notnull;default:NOW()"`
+	UpdatedAt *time.Time `norm:"default:NOW()"` // TIMESTAMP - nullable (pointer)
 }
 
 type Order struct {
-	ID        int       `norm:"index;notnull;pk"`
-	UserID    int       `norm:"index;notnull;fkey:users.id;ondelete:cascade"`
+	ID        uint      `norm:"index;notnull;pk"`
+	UserID    uint      `norm:"index;notnull;fkey:users.id;ondelete:cascade"`
 	Total     float64   `norm:"notnull"`
 	Status    string    `norm:"max:20;default:'pending'"` // VARCHAR(20) - explicit max
 	Notes     string    `norm:"text"`                     // TEXT - for long content
@@ -30,14 +31,18 @@ type Order struct {
 }
 
 type Analytics struct {
-	ID        int       `norm:"index;notnull;pk"`
-	EventType string    `norm:"index;notnull;max:100"` // VARCHAR(100)
-	EventData string    `norm:"type:JSONB"`            // JSONB
-	CreatedAt time.Time `norm:"index;notnull;default:NOW()"`
+	ID        uint                   `norm:"index;notnull;pk"`
+	UserID    *uint                  `norm:"skey:users.id;ondelete:setnull"` // Soft key - nullable, app-level cascade
+	EventType string                 `norm:"index;notnull;max:100"`          // VARCHAR(100)
+	EventData string                 `norm:"type:JSONB"`                     // JSONB - explicit type
+	Tags      []string               `norm:""`                               // TEXT[] - PostgreSQL array
+	Scores    []int                  `norm:""`                               // INTEGER[] - PostgreSQL array
+	Metadata  map[string]interface{} `norm:""`                               // JSONB - map type
+	CreatedAt time.Time              `norm:"index;notnull;default:NOW()"`
 }
 
 type Log struct {
-	ID        int       `norm:"index;notnull;pk"`
+	ID        uint      `norm:"index;notnull;pk"`
 	EventType string    `norm:"index;notnull;max:100"` // VARCHAR(100)
 	EventData string    `norm:"type:JSONB"`            // JSONB
 	Message   string    `norm:"text;notnull"`          // TEXT - for log messages
@@ -71,13 +76,13 @@ func setupGlobalMonolith(dsn string) {
 	// Register tables (auto-registered as global in global mode)
 	fmt.Println("\n=== Table Registration ===")
 
-	norm.Table(User{})
+	norm.RegisterTable(User{}, "users")
 	fmt.Println("✓ User table registered")
 
-	norm.Table(Order{})
+	norm.RegisterTable(Order{}, "orders")
 	fmt.Println("✓ Order table registered")
 
-	norm.Table(Log{})
+	norm.RegisterTable(Log{}, "logs")
 	fmt.Println("✓ Log table registered")
 }
 
@@ -114,13 +119,13 @@ func setupReadWriteSplit(dsnWrite, dsnRead1, dsnRead2 string) {
 	// Register tables (auto-registered as global in global mode)
 	fmt.Println("\n=== Table Registration ===")
 
-	norm.Table(User{})
+	norm.RegisterTable(User{}, "users")
 	fmt.Println("✓ User table registered")
 
-	norm.Table(Order{})
+	norm.RegisterTable(Order{}, "orders")
 	fmt.Println("✓ Order table registered")
 
-	norm.Table(Analytics{})
+	norm.RegisterTable(Analytics{}, "analytics")
 	fmt.Println("✓ Analytics table registered")
 }
 
@@ -165,8 +170,9 @@ func setupSharding(dsn1, dsn2, dsn3 string) {
 	// In shard mode, tables must be explicitly assigned to shards
 	// norm.Table(User{}) would not auto-register in shard mode
 
-	// Register User table to Shard1 with primary role
-	err = norm.Table(User{}).Shard("shard1").Primary()
+	// Register User table to Shard1 with pr
+	// imary role
+	err = norm.RegisterTable(User{}, "users").Shard("shard1").Primary()
 	if err != nil {
 		fmt.Println("User shard1 registration error:", err)
 	} else {
@@ -174,7 +180,7 @@ func setupSharding(dsn1, dsn2, dsn3 string) {
 	}
 
 	// Register Order table to Shard1 with primary role
-	err = norm.Table(Order{}).Shard("shard1").Primary()
+	err = norm.RegisterTable(Order{}, "orders").Shard("shard1").Primary()
 	if err != nil {
 		fmt.Println("Order shard1 registration error:", err)
 	} else {
@@ -182,13 +188,13 @@ func setupSharding(dsn1, dsn2, dsn3 string) {
 	}
 
 	// Register Analytics table to Shard2 with standalone role (won't be migrated)
-	err = norm.Table(Analytics{}).Shard("shard2").Standalone()
+	err = norm.RegisterTable(Analytics{}, "analytics").Shard("shard2").Standalone()
 	if err != nil {
 		fmt.Println("Analytics shard2 registration error:", err)
 	} else {
 		fmt.Println("✓ Analytics table registered to shard2 (standalone - no migration)")
 	}
-	err = norm.Table(Log{}).Shard("shard2").Standalone()
+	err = norm.RegisterTable(Log{}, "logs").Shard("shard2").Standalone()
 	if err != nil {
 		fmt.Println("Analytics shard2 registration error:", err)
 	} else {
@@ -221,7 +227,7 @@ func setupShardingWithReadWrite(dsn1, dsn2 string) {
 	fmt.Println("\n=== Table Registration with Roles ===")
 
 	// User table: Role = "primary" (transactional, needs consistency)
-	err = norm.Table(User{}).Shard("shard1").Primary()
+	err = norm.RegisterTable(User{}).Shard("shard1").Primary()
 	if err != nil {
 		fmt.Println("User registration error:", err)
 	} else {
@@ -230,7 +236,7 @@ func setupShardingWithReadWrite(dsn1, dsn2 string) {
 
 	// Order table: Role = "write" (write-heavy operations)
 	// When querying, the router will use write pool if available, else primary
-	err = norm.Table(Order{}).Shard("shard2").Write()
+	err = norm.RegisterTable(Order{}).Shard("shard2").Write()
 	if err != nil {
 		fmt.Println("Order registration error:", err)
 	} else {
@@ -239,7 +245,7 @@ func setupShardingWithReadWrite(dsn1, dsn2 string) {
 
 	// Analytics table: Role = "read" (read-only, reporting)
 	// When querying, the router will use read pool if available, else primary
-	err = norm.Table(Analytics{}).Shard("shard2").Read()
+	err = norm.RegisterTable(Analytics{}).Shard("shard2").Read()
 	if err != nil {
 		fmt.Println("Analytics registration error:", err)
 	} else {
@@ -254,10 +260,19 @@ func setupShardingWithReadWrite(dsn1, dsn2 string) {
 func main() {
 	// Load connection strings from environment variables
 	dsn := os.Getenv("DATABASE_DSN")
+	if dsn == "" {
+		dsn = "postgresql://postgres:qs7k9vynmpor4cug@31.97.114.213:10001/norm2" // fallback
+	}
 
 	dsn2 := os.Getenv("DATABASE_DSN2")
+	if dsn2 == "" {
+		dsn2 = "postgresql://postgres:8k5pwcxerelrw6vi@31.97.114.213:10002/norm1" // fallback
+	}
 
 	dsn3 := os.Getenv("DATABASE_DSN3")
+	if dsn3 == "" {
+		dsn3 = "postgresql://postgres:vagzxmwqico286rp@31.97.114.213:10003/hcfc" // fallback
+	}
 
 	// Choose ONE setup function to run:
 	// setupGlobalMonolith(dsn)                    // Single DB with replicas
@@ -273,4 +288,7 @@ func main() {
 
 	// Run auto migrations and print registry summary
 	norm.Norm()
+
+	// Run query builder examples
+	RunQueryExamples()
 }
