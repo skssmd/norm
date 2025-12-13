@@ -193,6 +193,37 @@ func (am *AutoMigrator) AutoMigrate() error {
 
 	return nil
 }
+// sortTablesByDependency returns table names sorted by dependency (no foreign keys first)
+func (am *AutoMigrator) sortTablesByDependency() []string {
+	var noDeps []string
+	var withDeps []string
+
+	for _, tableName := range registry.ListTables() {
+		table,exists := registry.GetTable(tableName)
+		if !exists{
+			fmt.Println(tableName, "is not registered")
+		} // assume this returns *TableModel
+		if table == nil {
+			continue
+		}
+
+		hasForeignKey := false
+		for _, f := range table.Fields {
+			if f.Fkey != "" {
+				hasForeignKey = true
+				break
+			}
+		}
+
+		if hasForeignKey {
+			withDeps = append(withDeps, tableName)
+		} else {
+			noDeps = append(noDeps, tableName)
+		}
+	}
+
+	return append(noDeps, withDeps...)
+}
 
 // migratePool runs auto migration on a single pool (for global mode)
 func (am *AutoMigrator) migratePool(pool *driver.PGPool, poolLabel string) error {
@@ -200,27 +231,26 @@ func (am *AutoMigrator) migratePool(pool *driver.PGPool, poolLabel string) error
 
 	fmt.Printf("🔄 Auto-migrating %s...\n", poolLabel)
 
-	// Sort models by dependency (tables without foreign keys first)
-	sortedModels := am.sortModelsByDependency()
+	// Sort table names by dependency (tables without foreign keys first)
+	sortedTableNames := am.sortTablesByDependency()
 
-	for _, model := range sortedModels {
-		tableName := getTableNameFromStruct(model)
-
-		// Check if table exists
-		exists, err := am.tableExists(ctx, pool, tableName)
+	for _, tableName := range sortedTableNames {
+	
+		// Check if table exists in DB
+		existsInDB, err := am.tableExists(ctx, pool, tableName)
 		if err != nil {
 			return fmt.Errorf("failed to check table '%s': %w", tableName, err)
 		}
 
-		if !exists {
+		if !existsInDB {
 			// Create new table
-			if err := am.createTable(ctx, pool, model, tableName); err != nil {
+			if err := am.createTable(ctx, pool, tableName); err != nil {
 				return fmt.Errorf("failed to create table '%s': %w", tableName, err)
 			}
 			fmt.Printf("  ✓ Created table '%s' in %s\n", tableName, poolLabel)
 		} else {
 			// Update existing table
-			if err := am.updateTable(ctx, pool, model, tableName); err != nil {
+			if err := am.updateTable(ctx, pool, tableName); err != nil {
 				return fmt.Errorf("failed to update table '%s': %w", tableName, err)
 			}
 			fmt.Printf("  ✓ Updated table '%s' in %s\n", tableName, poolLabel)
@@ -232,14 +262,13 @@ func (am *AutoMigrator) migratePool(pool *driver.PGPool, poolLabel string) error
 }
 
 // migratePoolForShard runs auto migration on a shard pool, only for tables registered to that shard
-func (am *AutoMigrator) migratePoolForShard(pool *driver.PGPool, shardName string, poolLabel string) error {
-	ctx := context.Background()
 
+// migratePoolForShard runs auto migration on a shard pool, only for tables registered to that shard
+func (am *AutoMigrator) migratePoolForShard( pool *driver.PGPool, shardName, poolLabel string) error {
 	fmt.Printf("🔄 Auto-migrating %s...\n", poolLabel)
-
+ctx := context.Background()
 	// Filter models that belong to this shard
 	shardModels := am.getModelsForShard(shardName)
-
 	if len(shardModels) == 0 {
 		fmt.Printf("  ⊘ No tables registered for %s\n", poolLabel)
 		return nil
@@ -248,28 +277,37 @@ func (am *AutoMigrator) migratePoolForShard(pool *driver.PGPool, shardName strin
 	// Sort models by dependency (tables without foreign keys first)
 	sortedModels := am.sortModelsByDependencyFromList(shardModels)
 
+	var migrationErrors []error
+
 	for _, model := range sortedModels {
 		tableName := getTableNameFromStruct(model)
 
 		// Check if table exists
 		exists, err := am.tableExists(ctx, pool, tableName)
 		if err != nil {
-			return fmt.Errorf("failed to check table '%s': %w", tableName, err)
+			migrationErrors = append(migrationErrors, fmt.Errorf("check table '%s': %w", tableName, err))
+			continue
 		}
 
 		if !exists {
 			// Create new table
-			if err := am.createTable(ctx, pool, model, tableName); err != nil {
-				return fmt.Errorf("failed to create table '%s': %w", tableName, err)
+			if err := am.createTable(ctx, pool, tableName); err != nil {
+				migrationErrors = append(migrationErrors, fmt.Errorf("create table '%s': %w", tableName, err))
+				continue
 			}
 			fmt.Printf("  ✓ Created table '%s' in %s\n", tableName, poolLabel)
 		} else {
 			// Update existing table
-			if err := am.updateTable(ctx, pool, model, tableName); err != nil {
-				return fmt.Errorf("failed to update table '%s': %w", tableName, err)
+			if err := am.updateTable(ctx, pool,  tableName); err != nil {
+				migrationErrors = append(migrationErrors, fmt.Errorf("update table '%s': %w", tableName, err))
+				continue
 			}
 			fmt.Printf("  ✓ Updated table '%s' in %s\n", tableName, poolLabel)
 		}
+	}
+
+	if len(migrationErrors) > 0 {
+		return fmt.Errorf("migration errors for %s: %v", poolLabel, migrationErrors)
 	}
 
 	fmt.Printf("✅ Auto-migration completed for %s\n", poolLabel)
@@ -300,9 +338,7 @@ func (am *AutoMigrator) getModelsForShard(shardName string) []interface{} {
 }
 
 // sortModelsByDependency sorts models so tables without foreign keys are created first
-func (am *AutoMigrator) sortModelsByDependency() []interface{} {
-	return am.sortModelsByDependencyFromList(am.models)
-}
+
 
 // sortModelsByDependencyFromList sorts a given list of models by dependency
 func (am *AutoMigrator) sortModelsByDependencyFromList(models []interface{}) []interface{} {
@@ -355,8 +391,8 @@ func (am *AutoMigrator) tableExists(ctx context.Context, pool *driver.PGPool, ta
 }
 
 // createTable creates a new table from struct
-func (am *AutoMigrator) createTable(ctx context.Context, pool *driver.PGPool, model interface{}, tableName string) error {
-	createSQL, indexSQLs := am.generateCreateTableSQL(model, tableName)
+func (am *AutoMigrator) createTable(ctx context.Context, pool *driver.PGPool,  tableName string) error {
+	createSQL, indexSQLs := am.generateCreateTableSQL( tableName)
 
 	// Execute CREATE TABLE statement
 	_, err := pool.Pool.Exec(ctx, createSQL)
@@ -376,93 +412,78 @@ func (am *AutoMigrator) createTable(ctx context.Context, pool *driver.PGPool, mo
 }
 
 // updateTable updates an existing table schema
-func (am *AutoMigrator) updateTable(ctx context.Context, pool *driver.PGPool, model interface{}, tableName string) error {
-	// Get existing columns
-	existingCols, err := am.getExistingColumns(ctx, pool, tableName)
-	if err != nil {
-		return err
-	}
+func (am *AutoMigrator) updateTable(ctx context.Context, pool *driver.PGPool, tableName string) error {
+    // Look up the model from registry
+    model, exists := registry.GetTable(tableName)
+    if !exists {
+        return fmt.Errorf("table model for '%s' not found", tableName)
+    }
 
-	// Get desired columns from struct
-	desiredCols := am.parseStructColumns(model)
+    existingCols, err := am.getExistingColumns(ctx, pool, tableName)
+    if err != nil {
+        return err
+    }
 
-	// Find columns to add
-	for colName, colDef := range desiredCols {
-		if _, exists := existingCols[colName]; !exists {
-			// Add new column
-			alterSQL := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s;", tableName, colName, colDef)
-			if _, err := pool.Pool.Exec(ctx, alterSQL); err != nil {
-				return fmt.Errorf("failed to add column '%s': %w", colName, err)
-			}
-			fmt.Printf("    + Added column '%s' to '%s'\n", colName, tableName)
-		}
-	}
+    desiredCols := am.parseStructColumns(*model)
 
-	// Add indexes and foreign keys for existing tables
-	if err := am.addIndexesAndConstraints(ctx, pool, model, tableName); err != nil {
-		return err
-	}
+    for colName, colDef := range desiredCols {
+        if _, exists := existingCols[colName]; !exists {
+            alterSQL := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s;", tableName, colName, colDef)
+            if _, err := pool.Pool.Exec(ctx, alterSQL); err != nil {
+                return fmt.Errorf("failed to add column '%s': %w", colName, err)
+            }
+            fmt.Printf("    + Added column '%s' to '%s'\n", colName, tableName)
+        }
+    }
 
-	// Note: We don't drop columns automatically for safety
-	// You can add logic here to detect and handle column type changes
+    if err := am.addIndexesAndConstraints(ctx, pool, tableName); err != nil {
+        return err
+    }
 
-	return nil
+    return nil
 }
 
+
 // addIndexesAndConstraints adds missing indexes and foreign keys to existing tables
-func (am *AutoMigrator) addIndexesAndConstraints(ctx context.Context, pool *driver.PGPool, model interface{}, tableName string) error {
-	t := reflect.TypeOf(model)
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
+func (am *AutoMigrator) addIndexesAndConstraints(ctx context.Context, pool *driver.PGPool, tableName string) error {
+		table, exists := registry.GetTable(tableName)
+
+	if !exists {
+		return fmt.Errorf("table not registered: %s", tableName)
 	}
 
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		colName := utils.ToSnakeCase(field.Name)
-		normTag := field.Tag.Get("norm")
-		tags := parseNormTags(normTag)
-
-		// Add index if specified
-		if _, ok := tags["index"]; ok {
-			indexName := fmt.Sprintf("idx_%s_%s", tableName, colName)
-			indexSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s(%s);", indexName, tableName, colName)
+	for _, f := range table.Fields {
+		// Index for regular or soft key
+		if f.Indexed || f.Skey != "" {
+			indexName := fmt.Sprintf("idx_%s_%s", tableName, f.Fieldname)
+			indexSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s(%s);", indexName, tableName, f.Fieldname)
 			if _, err := pool.Pool.Exec(ctx, indexSQL); err != nil && !strings.Contains(err.Error(), "already exists") {
 				fmt.Printf("    ⚠️  Failed to create index '%s': %v\n", indexName, err)
 			}
 		}
 
-		// Add index for soft key (application-level relationship)
-		if _, ok := tags["skey"]; ok {
-			indexName := fmt.Sprintf("idx_%s_%s", tableName, colName)
-			indexSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s(%s);", indexName, tableName, colName)
-			if _, err := pool.Pool.Exec(ctx, indexSQL); err != nil && !strings.Contains(err.Error(), "already exists") {
-				fmt.Printf("    ⚠️  Failed to create index '%s': %v\n", indexName, err)
+		// Foreign key
+		if f.Fkey != "" {
+			fkParts := strings.Split(f.Fkey, ".")
+			if len(fkParts) != 2 {
+				continue
 			}
-		}
 
-		// Add foreign key if specified (database-level constraint)
-		if fkey, ok := tags["fkey"]; ok {
-			fkParts := strings.Split(fkey.(string), ".")
-			if len(fkParts) == 2 {
-				onDelete := "NO ACTION"
-				if od, ok := tags["ondelete"]; ok {
-					onDelete = strings.ToUpper(od.(string))
-				}
+			onDelete := f.OnDelete
+			if onDelete == "" {
+				onDelete = "NO ACTION"
+			}
+			onUpdate := "NO ACTION" // optionally you can store this in Field struct if needed
 
-				onUpdate := "NO ACTION"
-				if ou, ok := tags["onupdate"]; ok {
-					onUpdate = strings.ToUpper(ou.(string))
-				}
+			fkName := fmt.Sprintf("fk_%s_%s", tableName, f.Fieldname)
+			fkSQL := fmt.Sprintf(
+				"ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s(%s) ON DELETE %s ON UPDATE %s;",
+				tableName, fkName, f.Fieldname, fkParts[0], fkParts[1], onDelete, onUpdate,
+			)
 
-				fkName := fmt.Sprintf("fk_%s_%s", tableName, colName)
-				fkSQL := fmt.Sprintf(
-					"ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s(%s) ON DELETE %s ON UPDATE %s;",
-					tableName, fkName, colName, fkParts[0], fkParts[1], onDelete, onUpdate)
-
-				if _, err := pool.Pool.Exec(ctx, fkSQL); err != nil {
-					if !strings.Contains(err.Error(), "already exists") {
-						fmt.Printf("    ⚠️  Failed to create foreign key '%s': %v\n", fkName, err)
-					}
+			if _, err := pool.Pool.Exec(ctx, fkSQL); err != nil {
+				if !strings.Contains(err.Error(), "already exists") {
+					fmt.Printf("    ⚠️  Failed to create foreign key '%s': %v\n", fkName, err)
 				}
 			}
 		}
@@ -499,20 +520,11 @@ func (am *AutoMigrator) getExistingColumns(ctx context.Context, pool *driver.PGP
 }
 
 // parseStructColumns parses struct fields into column definitions
-func (am *AutoMigrator) parseStructColumns(model interface{}) map[string]string {
+func (am *AutoMigrator) parseStructColumns(table registry.TableModel) map[string]string {
 	columns := make(map[string]string)
 
-	t := reflect.TypeOf(model)
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		colName := utils.ToSnakeCase(field.Name)
-		colType := am.getPostgresType(field)
-
-		columns[colName] = colType
+	for _, f := range table.Fields {
+		columns[f.Fieldname] = f.Fieldtype
 	}
 
 	return columns
@@ -520,232 +532,60 @@ func (am *AutoMigrator) parseStructColumns(model interface{}) map[string]string 
 
 // generateCreateTableSQL generates CREATE TABLE SQL from struct
 // Returns the CREATE TABLE statement and a slice of CREATE INDEX statements
-func (am *AutoMigrator) generateCreateTableSQL(model interface{}, tableName string) (string, []string) {
-	var sql strings.Builder
+func (am *AutoMigrator) generateCreateTableSQL(tableName string) (string, []string) {
+	table, exists := registry.GetTable(tableName)
 
-	sql.WriteString(fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n", tableName))
-
-	t := reflect.TypeOf(model)
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
+	if !exists {
+		panic("table not registered: " + tableName)
 	}
+
+	var sql strings.Builder
+	sql.WriteString(fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n", tableName))
 
 	columnDefs := make([]string, 0)
 	var primaryKeys []string
 	var foreignKeys []string
 	var indexes []string
 
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		colName := utils.ToSnakeCase(field.Name)
-		colType := am.getPostgresType(field)
+	for _, f := range table.Fields {
+		colDef := fmt.Sprintf("  %s %s", f.Fieldname, f.Fieldtype)
 
-		// Parse norm tags
-		normTag := field.Tag.Get("norm")
-		tags := parseNormTags(normTag)
-
-		colDef := fmt.Sprintf("  %s %s", colName, colType)
-
-		// Handle primary key - make it auto-incrementing
-		if _, ok := tags["pk"]; ok {
-			// For integer types, use SERIAL/BIGSERIAL for auto-increment
-			switch colType {
-			case "INTEGER":
-				colDef = fmt.Sprintf("  %s SERIAL", colName)
-			case "BIGINT":
-				colDef = fmt.Sprintf("  %s BIGSERIAL", colName)
-			}
-			primaryKeys = append(primaryKeys, colName)
+		if f.Pk {
+			colDef += " PRIMARY KEY"
+			primaryKeys = append(primaryKeys, f.Fieldname)
 		}
-
-		// Handle constraints
-		if _, ok := tags["notnull"]; ok {
-			colDef += " NOT NULL"
-		}
-
-		if _, ok := tags["unique"]; ok {
+		if f.Unique {
 			colDef += " UNIQUE"
 		}
-
-		if defaultVal, ok := tags["default"]; ok {
-			colDef += fmt.Sprintf(" DEFAULT %s", defaultVal.(string))
+		if f.OnDelete != "" && f.Fkey != "" {
+			fkParts := strings.Split(f.Fkey, ".")
+			foreignKeys = append(foreignKeys,
+				fmt.Sprintf("  FOREIGN KEY (%s) REFERENCES %s(%s) ON DELETE %s", f.Fieldname, fkParts[0], fkParts[1], f.OnDelete))
 		}
-
 		columnDefs = append(columnDefs, colDef)
 
-		// Handle foreign keys (database-level constraint)
-		if fkey, ok := tags["fkey"]; ok {
-			fkParts := strings.Split(fkey.(string), ".")
-			if len(fkParts) == 2 {
-				onDelete := "NO ACTION"
-				if od, ok := tags["ondelete"]; ok {
-					onDelete = strings.ToUpper(od.(string))
-				}
-
-				onUpdate := "NO ACTION"
-				if ou, ok := tags["onupdate"]; ok {
-					onUpdate = strings.ToUpper(ou.(string))
-				}
-
-				foreignKeys = append(foreignKeys,
-					fmt.Sprintf("  FOREIGN KEY (%s) REFERENCES %s(%s) ON DELETE %s ON UPDATE %s",
-						colName, fkParts[0], fkParts[1], onDelete, onUpdate))
-			}
-		}
-
-		// Handle soft keys (application-level relationship, no DB constraint)
-		// skey creates an indexed column for logical foreign key relationships
-		// Supports ondelete:cascade|setnull for application-level behavior
-		if skey, ok := tags["skey"]; ok {
-			_ = skey // Store metadata for application-level cascade/setnull
-			// Create index for soft key (improves query performance)
+		if f.Indexed || f.Skey != "" {
 			indexes = append(indexes,
-				fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_%s ON %s(%s);",
-					tableName, colName, tableName, colName))
-		}
-
-		// Handle indexes
-		if _, ok := tags["index"]; ok {
-			indexes = append(indexes,
-				fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_%s ON %s(%s);",
-					tableName, colName, tableName, colName))
+				fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_%s ON %s(%s);", tableName, f.Fieldname, tableName, f.Fieldname))
 		}
 	}
 
 	sql.WriteString(strings.Join(columnDefs, ",\n"))
+	sql.WriteString("\n);")
 
-	// Add primary key constraint
-	if len(primaryKeys) > 0 {
-		sql.WriteString(",\n")
-		sql.WriteString(fmt.Sprintf("  PRIMARY KEY (%s)", strings.Join(primaryKeys, ", ")))
-	}
-
-	// Add foreign key constraints
 	if len(foreignKeys) > 0 {
-		sql.WriteString(",\n")
+		sql.WriteString("\n")
 		sql.WriteString(strings.Join(foreignKeys, ",\n"))
 	}
-
-	sql.WriteString("\n);")
 
 	return sql.String(), indexes
 }
 
 // getPostgresType maps Go types to PostgreSQL types
-func (am *AutoMigrator) getPostgresType(field reflect.StructField) string {
-	normTag := field.Tag.Get("norm")
-	tags := parseNormTags(normTag)
 
-	// Check for explicit type in tag
-	if sqlType, ok := tags["type"]; ok {
-		return sqlType.(string)
-	}
-
-	// Handle pointer types (nullable fields)
-	fieldType := field.Type
-	if fieldType.Kind() == reflect.Ptr {
-		fieldType = fieldType.Elem()
-	}
-
-	// Map Go types to PostgreSQL types
-	switch fieldType.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32:
-		return "INTEGER"
-	case reflect.Int64:
-		return "BIGINT"
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32:
-		return "BIGINT"
-	case reflect.Uint64:
-		return "BIGINT"
-	case reflect.Float32:
-		return "REAL"
-	case reflect.Float64:
-		return "DOUBLE PRECISION"
-	case reflect.Bool:
-		return "BOOLEAN"
-	case reflect.String:
-		// Check for explicit text tag
-		if _, ok := tags["text"]; ok {
-			return "TEXT"
-		}
-		// Check for max length
-		if maxLen, ok := tags["max"]; ok {
-			return fmt.Sprintf("VARCHAR(%s)", maxLen.(string))
-		}
-		// Default to VARCHAR(255)
-		return "VARCHAR(255)"
-	case reflect.Struct:
-		// Handle time.Time (including *time.Time)
-		typeName := fieldType.String()
-		if typeName == "time.Time" {
-			return "TIMESTAMP"
-		}
-		// All other structs default to JSONB
-		return "JSONB"
-	case reflect.Slice:
-		// Handle []byte as BYTEA
-		if fieldType.Elem().Kind() == reflect.Uint8 {
-			return "BYTEA"
-		}
-
-		// Check for explicit array type tag (e.g., norm:"type:TEXT[]")
-		// This allows PostgreSQL native arrays
-
-		// Map Go slice types to PostgreSQL arrays
-		elemKind := fieldType.Elem().Kind()
-		switch elemKind {
-		case reflect.String:
-			return "TEXT[]" // PostgreSQL text array
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32:
-			return "INTEGER[]" // PostgreSQL integer array
-		case reflect.Int64:
-			return "BIGINT[]" // PostgreSQL bigint array
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32:
-			return "BIGINT[]" // PostgreSQL bigint array
-		case reflect.Uint64:
-			return "BIGINT[]" // PostgreSQL bigint array
-		case reflect.Float32:
-			return "REAL[]" // PostgreSQL real array
-		case reflect.Float64:
-			return "DOUBLE PRECISION[]" // PostgreSQL double precision array
-		case reflect.Bool:
-			return "BOOLEAN[]" // PostgreSQL boolean array
-		default:
-			// Complex types (structs, nested slices) → JSONB
-			return "JSONB"
-		}
-	case reflect.Map:
-		// Maps are stored as JSONB
-		return "JSONB"
-	default:
-		return "TEXT"
-	}
-}
 
 // parseNormTags parses norm struct tags
-func parseNormTags(tag string) map[string]interface{} {
-	tags := make(map[string]interface{})
-	if tag == "" {
-		return tags
-	}
 
-	parts := strings.Split(tag, ";")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-
-		if strings.Contains(part, ":") {
-			kv := strings.SplitN(part, ":", 2)
-			tags[kv[0]] = kv[1]
-		} else {
-			tags[part] = true
-		}
-	}
-
-	return tags
-}
 
 // getTableNameFromStruct determines the table name for a model.
 // It first prefers the explicitly registered table name from the registry,

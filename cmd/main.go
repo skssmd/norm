@@ -260,19 +260,11 @@ func setupShardingWithReadWrite(dsn1, dsn2 string) {
 func main() {
 	// Load connection strings from environment variables
 	dsn := os.Getenv("DATABASE_DSN")
-	if dsn == "" {
-		dsn = "postgresql://postgres:qs7k9vynmpor4cug@31.97.114.213:10001/norm2" // fallback
-	}
-
+	
 	dsn2 := os.Getenv("DATABASE_DSN2")
-	if dsn2 == "" {
-		dsn2 = "postgresql://postgres:8k5pwcxerelrw6vi@31.97.114.213:10002/norm1" // fallback
-	}
 
 	dsn3 := os.Getenv("DATABASE_DSN3")
-	if dsn3 == "" {
-		dsn3 = "postgresql://postgres:vagzxmwqico286rp@31.97.114.213:10003/hcfc" // fallback
-	}
+
 
 	// Choose ONE setup function to run:
 	// setupGlobalMonolith(dsn)                    // Single DB with replicas

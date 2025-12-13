@@ -4,13 +4,16 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
+
+	"github.com/skssmd/norm/core/utils"
 )
 
-// TableRegistry holds table-to-shard mappings
-type TableRegistry struct {
+// tableRegistry holds table-to-shard mappings
+type tableRegistry struct {
 	tables map[string]*TableShardMapping // tableName => shardName & role
-	models map[string]interface{}        // tableName => model struct
+	models map[string]*TableModel        // tableName => model struct
 	mu     sync.RWMutex
 }
 
@@ -21,16 +24,29 @@ type TableShardMapping struct {
 }
 
 // global table registry singleton
-var tableReg = &TableRegistry{
+var tableReg = &tableRegistry{
 	tables: make(map[string]*TableShardMapping),
-	models: make(map[string]interface{}),
+	models: make(map[string]*TableModel),
 }
-
+type TableModel struct {
+	Fields []Field
+}
 // TableBuilder for fluent API
 type TableBuilder struct {
 	tableName string
 }
-
+type Field struct{
+	Fieldname string
+	Pk bool
+	Fkey string
+	Skey string
+	Serial bool
+	Indexed bool
+	Unique bool
+	OnDelete string
+	Fieldtype string
+	Max string
+}
 // Table registers a table with the ORM for migrations and routing
 // Usage:
 //
@@ -46,7 +62,8 @@ func Table(model interface{}, tableName ...string) *TableBuilder {
 
 	// Store model in registry
 	tableReg.mu.Lock()
-	tableReg.models[name] = model
+	table := registerTable(model,name)
+	tableReg.models[name] = &table
 
 	// Auto-register as global if in global mode
 	dbMode := GetMode()
@@ -59,14 +76,89 @@ func Table(model interface{}, tableName ...string) *TableBuilder {
 		}
 	}
 	tableReg.mu.Unlock()
-
+	
 	// Register model for auto-migration callback
-	registerModelForMigration(model)
+	registerModelForMigration(table)
 
 	return &TableBuilder{
 		tableName: name,
 	}
 }
+
+func registerTable(model interface{}, tableName string) TableModel {
+	t := reflect.TypeOf(model)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	if t.Kind() != reflect.Struct {
+		panic("model must be struct or pointer to struct")
+	}
+
+	var table TableModel
+	table.Fields = make([]Field, 0, t.NumField())
+
+	for i := 0; i < t.NumField(); i++ {
+		sf := t.Field(i)
+
+		// skip unexported fields
+		if sf.PkgPath != "" {
+			continue
+		}
+
+		normTag := sf.Tag.Get("norm")
+		tags := utils.ParseNormTags(normTag)
+
+		f := Field{
+	Fieldname: utils.ToSnakeCase(sf.Name),
+	Fieldtype: utils.GetPostgresType(sf),
+}
+
+		if _, ok := tags["index"]; ok {
+			f.Indexed = true
+		}
+		if _, ok := tags["pk"]; ok {
+			f.Pk = true
+		}
+		if name, ok := tags["name"]; ok {
+			f.Fieldname = name.(string)
+		}
+		if _, ok := tags["unique"]; ok {
+			f.Unique = true
+		}
+		if maxLen, ok := tags["max"]; ok {
+			f.Max = maxLen.(string)
+		}
+		if skey, ok := tags["skey"]; ok {
+			skParts := strings.Split(skey.(string), ".")
+			if len(skParts) != 2 {
+				fmt.Println("error while registering table", tableName, "at col", f.Fieldname)
+				panic("skey")
+			}
+			f.Skey = skey.(string)
+			f.Indexed = true
+		}
+		if fkey, ok := tags["fkey"]; ok {
+			fkParts := strings.Split(fkey.(string), ".")
+			if len(fkParts) != 2 {
+				fmt.Println("error while registering table", tableName, "at col", f.Fieldname)
+				panic("fkey")
+			}
+			f.Fkey = fkey.(string)
+			f.OnDelete = "NO ACTION"
+
+			if od, ok := tags["ondelete"]; ok {
+				f.OnDelete = strings.ToUpper(od.(string))
+			}
+		}
+
+		table.Fields = append(table.Fields, f)
+	}
+
+	return table
+}
+
+
 
 // registerModelForMigration is a placeholder that will be set by norm package
 var registerModelForMigration = func(model interface{}) {
@@ -205,18 +297,30 @@ func (tsm *TableShardMapping) IsGlobal() bool {
 	return tsm.shardName == ""
 }
 
-// ListTables returns all registered table names
+
+// ListTables returns a slice of all registered table names
 func ListTables() []string {
 	tableReg.mu.RLock()
 	defer tableReg.mu.RUnlock()
 
-	tables := make([]string, 0, len(tableReg.tables))
-	for name := range tableReg.tables {
+	tables := make([]string, 0, len(tableReg.models))
+	for name := range tableReg.models {
 		tables = append(tables, name)
 	}
 	return tables
 }
 
+
+func GetTable(name string) (*TableModel,bool) {
+	tableReg.mu.RLock()
+	defer tableReg.mu.RUnlock()
+
+	table, exists := tableReg.models[name]
+	if !exists {
+		return nil,false
+	}
+	return table,true
+}
 // UnregisterTable removes a table from the registry (useful for testing)
 func UnregisterTable(tableName string) error {
 	tableReg.mu.Lock()
