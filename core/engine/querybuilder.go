@@ -39,7 +39,7 @@ type QueryBuilder struct {
 //
 // The model instance binds field pointers to the correct table
 func From(model interface{}) *QueryBuilder {
-	tableName := getTableName(model)
+	tableName := getTableNameFromModel(model)
 
 	return &QueryBuilder{
 		tableName:    tableName,
@@ -51,20 +51,7 @@ func From(model interface{}) *QueryBuilder {
 	}
 }
 
-// getTableName extracts table name from model struct
-func getTableName(model interface{}) string {
-	// Get the type
-	t := reflect.TypeOf(model)
 
-	// Handle pointer types
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-
-	// Return struct name as-is to match registry
-	// The registry stores tables by struct name (e.g., "User")
-	return t.Name()
-}
 
 // getTableNameFromModel extracts table name from registry or derives it
 func getTableNameFromModel(model interface{}) string {
@@ -259,70 +246,70 @@ func (qb *QueryBuilder) InsertNonZero(model interface{}) *QueryBuilder {
 func (qb *QueryBuilder) extractFieldsFromModel(model interface{}) map[string]interface{} {
 	fields := make(map[string]interface{})
 
-	modelValue := reflect.ValueOf(model)
-	if modelValue.Kind() == reflect.Ptr {
-		modelValue = modelValue.Elem()
+	v := reflect.ValueOf(model)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
 	}
 
-	if modelValue.Kind() != reflect.Struct {
+	if v.Kind() != reflect.Struct {
 		return fields
 	}
 
-	modelType := modelValue.Type()
+	t := v.Type()
 
-	for i := 0; i < modelType.NumField(); i++ {
-		field := modelType.Field(i)
-		fieldValue := modelValue.Field(i)
+	for i := 0; i < t.NumField(); i++ {
+		sf := t.Field(i)
+		fv := v.Field(i)
 
-		// Skip unexported fields
-		if field.PkgPath != "" {
+		// skip unexported fields
+		if sf.PkgPath != "" {
 			continue
 		}
 
-		// Skip zero values (unset fields)
-		if fieldValue.IsZero() {
+		// skip zero values (unset fields)
+		if fv.IsZero() {
 			continue
 		}
 
-		// Convert field name to snake_case column name
-		columnName := utils.ToSnakeCase(field.Name)
-		fields[columnName] = fieldValue.Interface()
+		columnName := utils.ResolveColumnName(sf)
+		fields[columnName] = fv.Interface()
 	}
 
 	return fields
 }
+
 
 // extractAllFieldsFromModel extracts ALL fields from a model instance (including zero values)
-func (qb *QueryBuilder) extractAllFieldsFromModel(model interface{}) map[string]interface{} {
-	fields := make(map[string]interface{})
+	func (qb *QueryBuilder) extractAllFieldsFromModel(model interface{}) map[string]interface{} {
+		fields := make(map[string]interface{})
 
-	modelValue := reflect.ValueOf(model)
-	if modelValue.Kind() == reflect.Ptr {
-		modelValue = modelValue.Elem()
-	}
+		v := reflect.ValueOf(model)
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
 
-	if modelValue.Kind() != reflect.Struct {
+		if v.Kind() != reflect.Struct {
+			return fields
+		}
+
+		t := v.Type()
+
+		for i := 0; i < t.NumField(); i++ {
+			sf := t.Field(i)
+			fv := v.Field(i)
+
+			// skip unexported
+			if sf.PkgPath != "" {
+				continue
+			}
+
+			columnName := utils.ResolveColumnName(sf)
+			fields[columnName] = fv.Interface()
+		}
+
 		return fields
 	}
 
-	modelType := modelValue.Type()
-
-	for i := 0; i < modelType.NumField(); i++ {
-		field := modelType.Field(i)
-		fieldValue := modelValue.Field(i)
-
-		// Skip unexported fields
-		if field.PkgPath != "" {
-			continue
-		}
-
-		// Convert field name to snake_case column name
-		columnName := utils.ToSnakeCase(field.Name)
-		fields[columnName] = fieldValue.Interface()
-	}
-
-	return fields
-}
 
 // OrderBy adds ORDER BY clause
 // Usage: OrderBy("created_at DESC")
@@ -601,7 +588,7 @@ type BulkInsertBuilder struct {
 // BulkInsert creates a new bulk insert builder from model
 // Usage: BulkInsert(User{}, []string{"name", "email"}, [][]interface{}{{"John", "john@example.com"}, {"Jane", "jane@example.com"}})
 func BulkInsert(model interface{}, columns []string, rows [][]interface{}) *BulkInsertBuilder {
-	tableName := getTableName(model)
+	tableName := getTableNameFromModel(model)
 
 	return &BulkInsertBuilder{
 		tableName: tableName,

@@ -3,54 +3,54 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
-	"time"
 
 	"github.com/skssmd/norm"
 )
 
-// Example table structs for testing
-type User struct {
-	ID        uint       `norm:"index;notnull;pk"`
-	Email     string     `norm:"unique;notnull"` // VARCHAR(255) - default
-	Name      string     `norm:"notnull"`        // VARCHAR(255) - default
-	Username  string     `norm:"notnull;unique"` // VARCHAR(255) - default
-	Bio       *string    `norm:"text"`           // TEXT - nullable (pointer)
-	Age       *uint      `norm:""`               // BIGINT - nullable (pointer)
-	CreatedAt time.Time  `norm:"notnull;default:NOW()"`
-	UpdatedAt *time.Time `norm:"default:NOW()"` // TIMESTAMP - nullable (pointer)
-}
+// // Example table structs for testing
+// type User struct {
+// 	ID        uint       `norm:"index;notnull;pk;auto"`
+// 	Email     string     `norm:"name:useremail;unique;notnull"` // VARCHAR(255) - default
+// 	Name      string     `norm:"name:fullname;notnull"`        // VARCHAR(255) - default
+// 	Username  string     `norm:"name:uname;notnull;unique"` // VARCHAR(255) - default
+// 	Bio       *string    `norm:"text"`           // TEXT - nullable (pointer)
+// 	Age       *uint      `norm:""`               // BIGINT - nullable (pointer)
+// 	CreatedAt time.Time  `norm:"notnull;default:NOW()"`
+// 	UpdatedAt *time.Time `norm:"default:NOW()"` // TIMESTAMP - nullable (pointer)
+// }
 
-type Order struct {
-	ID        uint      `norm:"index;notnull;pk"`
-	UserID    uint      `norm:"index;notnull;fkey:users.id;ondelete:cascade"`
-	Total     float64   `norm:"notnull"`
-	Status    string    `norm:"max:20;default:'pending'"` // VARCHAR(20) - explicit max
-	Notes     string    `norm:"text"`                     // TEXT - for long content
-	CreatedAt time.Time `norm:"notnull;default:NOW()"`
-}
+// type Order struct {
+// 	ID        uint      `norm:"index;notnull;pk;auto"`
+// 	UserID    uint      `norm:"index;notnull;fkey:users.id;ondelete:cascade"`
+// 	Total     float64   `norm:"notnull"`
+// 	Status    string    `norm:"max:20;default:'pending'"` // VARCHAR(20) - explicit max
+// 	Notes     string    `norm:"text"`                     // TEXT - for long content
+// 	CreatedAt time.Time `norm:"notnull;default:NOW()"`
+// }
 
-type Analytics struct {
-	ID        uint                   `norm:"index;notnull;pk"`
-	UserID    *uint                  `norm:"skey:users.id;ondelete:setnull"` // Soft key - nullable, app-level cascade
-	EventType string                 `norm:"index;notnull;max:100"`          // VARCHAR(100)
-	EventData string                 `norm:"type:JSONB"`                     // JSONB - explicit type
-	Tags      []string               `norm:""`                               // TEXT[] - PostgreSQL array
-	Scores    []int                  `norm:""`                               // INTEGER[] - PostgreSQL array
-	Metadata  map[string]interface{} `norm:""`                               // JSONB - map type
-	CreatedAt time.Time              `norm:"index;notnull;default:NOW()"`
-}
+// type Analytics struct {
+// 	ID        uint                   `norm:"index;notnull;pk;auto"`
+// 	UserID    *uint                  `norm:"skey:users.id;ondelete:setnull"` // Soft key - nullable, app-level cascade
+// 	EventType string                 `norm:"index;notnull;max:100"`          // VARCHAR(100)
+// 	EventData string                 `norm:"type:JSONB"`                     // JSONB - explicit type
+// 	Tags      []string               `norm:""`                               // TEXT[] - PostgreSQL array
+// 	Scores    []int                  `norm:""`                               // INTEGER[] - PostgreSQL array
+// 	Metadata  map[string]interface{} `norm:""`                               // JSONB - map type
+// 	CreatedAt time.Time              `norm:"index;notnull;default:NOW()"`
+// }
 
-type Log struct {
-	ID        uint      `norm:"index;notnull;pk"`
-	EventType string    `norm:"index;notnull;max:100"` // VARCHAR(100)
-	EventData string    `norm:"type:JSONB"`            // JSONB
-	Message   string    `norm:"text;notnull"`          // TEXT - for log messages
-	CreatedAt time.Time `norm:"index;notnull;default:NOW()"`
-}
+// type Log struct {
+// 	ID        uint      `norm:"index;notnull;pk;auto"`
+// 	EventType string    `norm:"index;notnull;max:100"` // VARCHAR(100)
+// 	EventData string    `norm:"type:JSONB"`            // JSONB
+// 	Message   string    `norm:"text;notnull"`          // TEXT - for log messages
+// 	CreatedAt time.Time `norm:"index;notnull;default:NOW()"`
+// }
 
 // setupGlobalMonolith configures a single primary database with replicas
-func setupGlobalMonolith(dsn string) {
+func setupGlobalMonolith() {
+	dsns := GetDSNs()
+	dsn := dsns.Primary
 	fmt.Println("=== Global Monolith Scenario ===")
 
 	// Register primary connection
@@ -87,7 +87,11 @@ func setupGlobalMonolith(dsn string) {
 }
 
 // setupReadWriteSplit configures separate read and write pools
-func setupReadWriteSplit(dsnWrite, dsnRead1, dsnRead2 string) {
+func setupReadWriteSplit() {
+	dsns := GetDSNs()
+	dsnWrite := dsns.Primary
+	dsnRead1 := dsns.Replica1
+	dsnRead2 := dsns.Replica2
 	fmt.Println("=== Read/Write Split Scenario ===")
 
 	// Register write pool
@@ -130,7 +134,11 @@ func setupReadWriteSplit(dsnWrite, dsnRead1, dsnRead2 string) {
 }
 
 // setupSharding configures multiple shards with different tables
-func setupSharding(dsn1, dsn2, dsn3 string) {
+func setupSharding() {
+	dsns := GetDSNs()
+	dsn1 := dsns.Primary
+	dsn2 := dsns.Replica1
+	dsn3 := dsns.Replica2
 	fmt.Println("=== Shard Scenario ===")
 
 	// Shard 1 primary (for general tables)
@@ -172,7 +180,7 @@ func setupSharding(dsn1, dsn2, dsn3 string) {
 
 	// Register User table to Shard1 with pr
 	// imary role
-	err = norm.RegisterTable(User{}, "users").Shard("shard1").Primary()
+	err = norm.RegisterTable(User{}, "users").Primary("shard1")
 	if err != nil {
 		fmt.Println("User shard1 registration error:", err)
 	} else {
@@ -180,7 +188,7 @@ func setupSharding(dsn1, dsn2, dsn3 string) {
 	}
 
 	// Register Order table to Shard1 with primary role
-	err = norm.RegisterTable(Order{}, "orders").Shard("shard1").Primary()
+	err = norm.RegisterTable(Order{}, "orders").Primary("shard1")
 	if err != nil {
 		fmt.Println("Order shard1 registration error:", err)
 	} else {
@@ -188,13 +196,13 @@ func setupSharding(dsn1, dsn2, dsn3 string) {
 	}
 
 	// Register Analytics table to Shard2 with standalone role (won't be migrated)
-	err = norm.RegisterTable(Analytics{}, "analytics").Shard("shard2").Standalone()
+	err = norm.RegisterTable(Analytics{}, "analytics").Standalone("shard2")
 	if err != nil {
 		fmt.Println("Analytics shard2 registration error:", err)
 	} else {
 		fmt.Println("✓ Analytics table registered to shard2 (standalone - no migration)")
 	}
-	err = norm.RegisterTable(Log{}, "logs").Shard("shard2").Standalone()
+	err = norm.RegisterTable(Log{}, "logs").Standalone("shard2")
 	if err != nil {
 		fmt.Println("Analytics shard2 registration error:", err)
 	} else {
@@ -205,7 +213,10 @@ func setupSharding(dsn1, dsn2, dsn3 string) {
 
 // setupShardingWithReadWrite configures shards with table-based read/write roles
 // Tables are assigned roles (primary/read/write) which determine which pool to use
-func setupShardingWithReadWrite(dsn1, dsn2 string) {
+func setupShardingWithReadWrite() {
+	dsns := GetDSNs()
+	dsn1 := dsns.Primary
+	dsn2 := dsns.Replica1
 	fmt.Println("=== Shard with Table-Based Read/Write Roles ===")
 	fmt.Println("(Tables registered with 'read' or 'write' roles)")
 
@@ -227,7 +238,7 @@ func setupShardingWithReadWrite(dsn1, dsn2 string) {
 	fmt.Println("\n=== Table Registration with Roles ===")
 
 	// User table: Role = "primary" (transactional, needs consistency)
-	err = norm.RegisterTable(User{}).Shard("shard1").Primary()
+	err = norm.RegisterTable(User{}).Primary("shard1")
 	if err != nil {
 		fmt.Println("User registration error:", err)
 	} else {
@@ -236,7 +247,7 @@ func setupShardingWithReadWrite(dsn1, dsn2 string) {
 
 	// Order table: Role = "write" (write-heavy operations)
 	// When querying, the router will use write pool if available, else primary
-	err = norm.RegisterTable(Order{}).Shard("shard2").Write()
+	err = norm.RegisterTable(Order{}).Write("shard2")
 	if err != nil {
 		fmt.Println("Order registration error:", err)
 	} else {
@@ -245,7 +256,7 @@ func setupShardingWithReadWrite(dsn1, dsn2 string) {
 
 	// Analytics table: Role = "read" (read-only, reporting)
 	// When querying, the router will use read pool if available, else primary
-	err = norm.RegisterTable(Analytics{}).Shard("shard2").Read()
+	err = norm.RegisterTable(Analytics{}).Read("shard2")
 	if err != nil {
 		fmt.Println("Analytics registration error:", err)
 	} else {
@@ -257,20 +268,15 @@ func setupShardingWithReadWrite(dsn1, dsn2 string) {
 	fmt.Println("   Example: Analytics table with 'read' role → uses read pool for SELECT queries")
 }
 
-func main() {
+func maina() {
 	// Load connection strings from environment variables
-	dsn := os.Getenv("DATABASE_DSN")
-	
-	dsn2 := os.Getenv("DATABASE_DSN2")
-
-	dsn3 := os.Getenv("DATABASE_DSN3")
-
+	// dsns := GetDSNs()
 
 	// Choose ONE setup function to run:
-	// setupGlobalMonolith(dsn)                    // Single DB with replicas
-	//setupReadWriteSplit(dsn, dsn3, dsn2) // Separate read/write DBs
-	setupSharding(dsn, dsn2, dsn3) // Multiple shards
-	// setupShardingWithReadWrite(dsn, dsn2)       // Shards with table-based read/write roles
+	// setupGlobalMonolith()                    // Single DB with replicas
+	//setupReadWriteSplit() // Separate read/write DBs
+	setupSharding() // Multiple shards
+	// setupShardingWithReadWrite()       // Shards with table-based read/write roles
 
 	// Drop all tables (useful for development to start fresh)
 	// Uncomment to drop tables before migration

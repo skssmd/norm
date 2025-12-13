@@ -301,3 +301,33 @@ func GetMode() string {
 	defer norm.mu.RUnlock()
 	return norm.mode
 }
+
+// Reset closes all connections and clears the registry
+// Useful for testing scenarios
+func Reset() {
+	norm.mu.Lock()
+	defer norm.mu.Unlock()
+
+	// Close global pools
+	for _, pool := range norm.pools {
+		pool.Close()
+	}
+	norm.pools = make(map[string]*driver.PGPool)
+
+	// Close shard pools
+	for _, shard := range norm.shards {
+		if shard.primary != nil {
+			shard.primary.Close()
+		}
+		for _, pool := range shard.standalone {
+			pool.Close()
+		}
+	}
+	norm.shards = make(map[string]*ShardPools)
+
+	// Reset mode
+	norm.mode = ""
+
+	// Reset table registry
+	resetTables()
+}

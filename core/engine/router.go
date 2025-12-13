@@ -232,8 +232,16 @@ func (q *Query) getPool() (*driver.PGPool, error) {
 
 // getGlobalPool gets pool for global mode
 func (q *Query) getGlobalPool(info map[string]interface{}) (*driver.PGPool, error) {
-	pools := info["pools"].(map[string]*driver.PGPool)
+	poolsRaw := info["pools"].(map[string]interface{})
 	queryType := q.builder.queryType
+
+	// Convert interface{} map to typed map
+	pools := make(map[string]*driver.PGPool)
+	for name, poolInterface := range poolsRaw {
+		if pool, ok := poolInterface.(*driver.PGPool); ok {
+			pools[name] = pool
+		}
+	}
 
 	// Detect scenario based on available pools
 	hasReadWrite := pools["read"] != nil || pools["write"] != nil
@@ -295,60 +303,69 @@ func (q *Query) getGlobalPool(info map[string]interface{}) (*driver.PGPool, erro
 // getShardPool gets pool for shard mode
 func (q *Query) getShardPool(info map[string]interface{}) (*driver.PGPool, error) {
 	// Get table mapping
-	tableMapping, err := registry.GetTableMapping(q.table)
-	if err != nil {
-		return nil, fmt.Errorf("table '%s' not registered: %w", q.table, err)
+	tableModel, exists := registry.GetModel(q.table)
+	if !exists {
+		return nil, fmt.Errorf("table '%s' not registered", q.table)
 	}
 
-	shardName := tableMapping.ShardName()
-	role := tableMapping.Role()
+	// Find the shard for the table for any role
+	var shardName, role string
+	found := false
+	for r, shards := range tableModel.Roles {
+		for s := range shards {
+			shardName = s
+			role = r
+			found = true
+			break
+		}
+		if found {
+			break
+		}
+	}
 
+	if !found {
+		return nil, fmt.Errorf("no shard found for table '%s'", q.table)
+	}
+
+	// Lookup shard info in registry
 	shards := info["shards"].(map[string]interface{})
-	shardInfo, ok := shards[shardName]
+	shardInfoRaw, ok := shards[shardName]
 	if !ok {
 		return nil, fmt.Errorf("shard '%s' not found", shardName)
 	}
 
-	shardData := shardInfo.(map[string]interface{})
+	shardInfo := shardInfoRaw.(map[string]interface{})
 
 	// Get primary pool
 	var primaryPool *driver.PGPool
-	if pp, ok := shardData["primary_pool"]; ok && pp != nil {
+	if pp, ok := shardInfo["primary_pool"]; ok && pp != nil {
 		primaryPool = pp.(*driver.PGPool)
 	}
 
-	// Get standalone pools
-	var standalonePools map[string]*driver.PGPool
-	if sp, ok := shardData["standalone_pools"]; ok && sp != nil {
-		standalonePools = sp.(map[string]*driver.PGPool)
+	// Get standalone pool for this table
+	var standalonePool *driver.PGPool
+	if spRaw, ok := shardInfo["standalone_pools"]; ok && spRaw != nil {
+		if spMap, ok := spRaw.(map[string]*driver.PGPool); ok {
+			if pool, ok := spMap[q.table]; ok {
+				standalonePool = pool
+			}
+		}
 	}
 
 	queryType := q.builder.queryType
 
-	// Scenario: Shards - Use table-specific shard or primary
 	switch queryType {
 	case "insert", "update", "delete", "bulkinsert":
-		// Writes: Use table's registered role pool, fallback to primary
-		if role == "standalone" && standalonePools != nil {
-			// For standalone tables, use the first standalone pool
-			for _, pool := range standalonePools {
-				return pool, nil
-			}
+		if role == "standalone" && standalonePool != nil {
+			return standalonePool, nil
 		}
-		// Fallback to primary for writes
 		if primaryPool != nil {
 			return primaryPool, nil
 		}
-
 	case "select":
-		// Reads: Use table's registered role pool, fallback to primary
-		if role == "standalone" && standalonePools != nil {
-			// For standalone tables, use the first standalone pool
-			for _, pool := range standalonePools {
-				return pool, nil
-			}
+		if role == "standalone" && standalonePool != nil {
+			return standalonePool, nil
 		}
-		// Fallback to primary
 		if primaryPool != nil {
 			return primaryPool, nil
 		}

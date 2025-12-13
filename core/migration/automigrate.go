@@ -322,14 +322,22 @@ func (am *AutoMigrator) getModelsForShard(shardName string) []interface{} {
 		// Get the registered table name for this model
 		tableName := getTableNameFromStruct(model)
 
-		// Try to get table mapping using the table name
-		mapping, err := registry.GetTableMapping(tableName)
-		if err != nil {
-			continue // Skip if not found
+		// Try to get the TableModel from registry
+		table, exists := registry.GetModel(tableName)
+		if !exists {
+			continue
 		}
 
-		// Include if table is mapped to this shard (primary or standalone)
-		if mapping.ShardName() == shardName {
+		// Check if the shard exists in any role
+		found := false
+		for _, shardSet := range table.Roles {
+			if _, ok := shardSet[shardName]; ok {
+				found = true
+				break
+			}
+		}
+
+		if found {
 			shardModels = append(shardModels, model)
 		}
 	}
@@ -534,52 +542,87 @@ func (am *AutoMigrator) parseStructColumns(table registry.TableModel) map[string
 // Returns the CREATE TABLE statement and a slice of CREATE INDEX statements
 func (am *AutoMigrator) generateCreateTableSQL(tableName string) (string, []string) {
 	table, exists := registry.GetTable(tableName)
-
 	if !exists {
 		panic("table not registered: " + tableName)
 	}
 
-	var sql strings.Builder
-	sql.WriteString(fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n", tableName))
-
-	columnDefs := make([]string, 0)
-	var primaryKeys []string
+	var defs []string
 	var foreignKeys []string
 	var indexes []string
 
 	for _, f := range table.Fields {
-		colDef := fmt.Sprintf("  %s %s", f.Fieldname, f.Fieldtype)
+		// ---- column definition ----
+		col := []string{
+			f.Fieldname,
+			f.Fieldtype,
+		}
+
+		// Add GENERATED ALWAYS AS IDENTITY for auto-increment fields
+		// This enforces strict auto-increment and blocks manual ID insertion
+		if f.Serial && (f.Fieldtype == "BIGINT" || f.Fieldtype == "INTEGER") {
+			col = append(col, "GENERATED ALWAYS AS IDENTITY")
+		}
 
 		if f.Pk {
-			colDef += " PRIMARY KEY"
-			primaryKeys = append(primaryKeys, f.Fieldname)
+			col = append(col, "PRIMARY KEY")
 		}
 		if f.Unique {
-			colDef += " UNIQUE"
+			col = append(col, "UNIQUE")
 		}
-		if f.OnDelete != "" && f.Fkey != "" {
+
+		defs = append(defs, "  "+strings.Join(col, " "))
+
+		// ---- foreign key constraint ----
+		if f.Fkey != "" {
 			fkParts := strings.Split(f.Fkey, ".")
-			foreignKeys = append(foreignKeys,
-				fmt.Sprintf("  FOREIGN KEY (%s) REFERENCES %s(%s) ON DELETE %s", f.Fieldname, fkParts[0], fkParts[1], f.OnDelete))
-		}
-		columnDefs = append(columnDefs, colDef)
+			if len(fkParts) != 2 {
+				panic("invalid fkey format for " + tableName + "." + f.Fieldname)
+			}
 
+			onDelete := f.OnDelete
+			if onDelete == "" {
+				onDelete = "NO ACTION"
+			}
+
+			foreignKeys = append(
+				foreignKeys,
+				fmt.Sprintf(
+					"  FOREIGN KEY (%s) REFERENCES %s(%s) ON DELETE %s",
+					f.Fieldname,
+					fkParts[0],
+					fkParts[1],
+					onDelete,
+				),
+			)
+		}
+
+		// ---- indexes ----
 		if f.Indexed || f.Skey != "" {
-			indexes = append(indexes,
-				fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_%s ON %s(%s);", tableName, f.Fieldname, tableName, f.Fieldname))
+			indexes = append(
+				indexes,
+				fmt.Sprintf(
+					"CREATE INDEX IF NOT EXISTS idx_%s_%s ON %s(%s);",
+					tableName,
+					f.Fieldname,
+					tableName,
+					f.Fieldname,
+				),
+			)
 		}
 	}
 
-	sql.WriteString(strings.Join(columnDefs, ",\n"))
-	sql.WriteString("\n);")
+	// merge columns + constraints
+	allDefs := append(defs, foreignKeys...)
 
-	if len(foreignKeys) > 0 {
-		sql.WriteString("\n")
-		sql.WriteString(strings.Join(foreignKeys, ",\n"))
-	}
+	sql := fmt.Sprintf(
+		"CREATE TABLE IF NOT EXISTS %s (\n%s\n);",
+		tableName,
+		strings.Join(allDefs, ",\n"),
+	)
 
-	return sql.String(), indexes
+	return sql, indexes
 }
+
 
 // getPostgresType maps Go types to PostgreSQL types
 

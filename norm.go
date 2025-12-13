@@ -22,6 +22,12 @@ func Register(dsn string) *registry.ConnBuilder {
 	return registry.Register(dsn)
 }
 
+// Reset clears all registry state (connections and tables)
+// Useful for testing scenarios
+func Reset() {
+	registry.Reset()
+}
+
 // ============================================================
 // Table Registration
 // ============================================================
@@ -31,7 +37,7 @@ func Register(dsn string) *registry.ConnBuilder {
 //
 //	norm.RegisterTable(User{}, "users").Shard("shard1").Primary()
 //	norm.RegisterTable(User{}).Shard("shard1").Primary()  // Auto-generate table name
-func RegisterTable(model interface{}, tableName ...string) *registry.TableBuilder {
+func RegisterTable(model interface{}, tableName ...string) *registry.TableModel {
 	return registry.Table(model, tableName...)
 }
 
@@ -156,16 +162,22 @@ func Norm() {
 	if len(allTables) > 0 {
 		fmt.Println("\n  Table Mappings:")
 		for _, tableName := range allTables {
-			mapping, err := registry.GetTableMapping(tableName)
-			if err == nil {
-				if mapping.IsGlobal() {
-					fmt.Printf("    • %s → Global (mode: %s)\n", tableName, dbInfo["mode"])
-				} else {
-					fmt.Printf("    • %s → Shard: %s, Role: %s\n",
-						tableName, mapping.ShardName(), mapping.Role())
+			table, exists := registry.GetModel(tableName)
+			if !exists {
+				continue
+			}
+
+			if table.IsGlobal() {
+				fmt.Printf("    • %s → Global (mode: %s)\n", tableName, dbInfo["mode"])
+			} else {
+				for role, shards := range table.Roles {
+					shardList := make([]string, 0, len(shards))
+					for shard := range shards {
+						shardList = append(shardList, shard)
+					}
+					fmt.Printf("    • %s → Role: %s, Shards: %v\n", tableName, role, shardList)
 				}
 			}
 		}
 	}
-
 }

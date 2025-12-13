@@ -39,5 +39,9 @@ func Connect(dsn string) (*PGPool, error) {
 	}
 
 	return &PGPool{Pool: pool}, nil
+}
 
+// Close closes the connection pool
+func (p *PGPool) Close() {
+	p.Pool.Close()
 }

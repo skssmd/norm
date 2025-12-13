@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -12,29 +11,24 @@ import (
 
 // tableRegistry holds table-to-shard mappings
 type tableRegistry struct {
-	tables map[string]*TableShardMapping // tableName => shardName & role
-	models map[string]*TableModel        // tableName => model struct
+	models map[string]*TableModel // tableName => model
 	mu     sync.RWMutex
 }
 
-// TableShardMapping defines which shard and role a table uses
-type TableShardMapping struct {
-	shardName string
-	role      string // primary/read/write/standalone or empty for global
-}
-
-// global table registry singleton
 var tableReg = &tableRegistry{
-	tables: make(map[string]*TableShardMapping),
 	models: make(map[string]*TableModel),
 }
+
 type TableModel struct {
-	Fields []Field
+	TableName string
+	Fields    []Field
+
+	// role -> set of shards
+	Roles map[string]map[string]struct{}
 }
+
 // TableBuilder for fluent API
-type TableBuilder struct {
-	tableName string
-}
+
 type Field struct{
 	Fieldname string
 	Pk bool
@@ -52,7 +46,7 @@ type Field struct{
 //
 //	Table(User{}, "users")  // With custom table name
 //	Table(User{})           // Auto-generate from struct name
-func Table(model interface{}, tableName ...string) *TableBuilder {
+func Table(model interface{}, tableName ...string) *TableModel {
 	var name string
 	if len(tableName) > 0 && tableName[0] != "" {
 		name = tableName[0]
@@ -60,30 +54,25 @@ func Table(model interface{}, tableName ...string) *TableBuilder {
 		name = getTableName(model)
 	}
 
-	// Store model in registry
 	tableReg.mu.Lock()
-	table := registerTable(model,name)
+	defer tableReg.mu.Unlock()
+
+	table := registerTable(model, name)
+
+	// initialize roles
+	table.Roles = make(map[string]map[string]struct{})
+
+	// store pointer
 	tableReg.models[name] = &table
 
-	// Auto-register as global if in global mode
-	dbMode := GetMode()
-	if dbMode == "" || dbMode == "global" {
-		if _, exists := tableReg.tables[name]; !exists {
-			tableReg.tables[name] = &TableShardMapping{
-				shardName: "",
-				role:      "",
-			}
-		}
-	}
-	tableReg.mu.Unlock()
-	
-	// Register model for auto-migration callback
+	// migration bookkeeping
 	registerModelForMigration(table)
 
-	return &TableBuilder{
-		tableName: name,
-	}
+	// RETURN THE SAME POINTER
+	return tableReg.models[name]
 }
+
+
 
 func registerTable(model interface{}, tableName string) TableModel {
 	t := reflect.TypeOf(model)
@@ -108,10 +97,9 @@ func registerTable(model interface{}, tableName string) TableModel {
 
 		normTag := sf.Tag.Get("norm")
 		tags := utils.ParseNormTags(normTag)
-
-		f := Field{
-	Fieldname: utils.ToSnakeCase(sf.Name),
-	Fieldtype: utils.GetPostgresType(sf),
+f := Field{
+    Fieldname: utils.ResolveColumnName(sf),
+    Fieldtype: utils.GetPostgresType(sf),
 }
 
 		if _, ok := tags["index"]; ok {
@@ -120,9 +108,11 @@ func registerTable(model interface{}, tableName string) TableModel {
 		if _, ok := tags["pk"]; ok {
 			f.Pk = true
 		}
-		if name, ok := tags["name"]; ok {
-			f.Fieldname = name.(string)
+	
+		if _, ok := tags["auto"]; ok {
+			f.Serial = true
 		}
+	
 		if _, ok := tags["unique"]; ok {
 			f.Unique = true
 		}
@@ -137,6 +127,8 @@ func registerTable(model interface{}, tableName string) TableModel {
 			}
 			f.Skey = skey.(string)
 			f.Indexed = true
+
+			
 		}
 		if fkey, ok := tags["fkey"]; ok {
 			fkParts := strings.Split(fkey.(string), ".")
@@ -145,12 +137,15 @@ func registerTable(model interface{}, tableName string) TableModel {
 				panic("fkey")
 			}
 			f.Fkey = fkey.(string)
-			f.OnDelete = "NO ACTION"
+		
+			f.Indexed = true
+			
+		}
+		f.OnDelete = "NO ACTION"
 
 			if od, ok := tags["ondelete"]; ok {
 				f.OnDelete = strings.ToUpper(od.(string))
 			}
-		}
 
 		table.Fields = append(table.Fields, f)
 	}
@@ -209,67 +204,92 @@ func GetRegisteredTableName(model interface{}) string {
 }
 
 // TableShardBuilder for shard-specific configuration
-type TableShardBuilder struct {
-	tableName string
-	shardName string
-}
 
 // Shard specifies which shard the table belongs to
-func (tb *TableBuilder) Shard(shardName string) *TableShardBuilder {
-	return &TableShardBuilder{
-		tableName: tb.tableName,
-		shardName: shardName,
+
+
+	// TableModel fluent API for shard assignment
+func (tm *TableModel) Primary(shard string) error {
+	if tm.Roles == nil {
+		tm.Roles = make(map[string]map[string]struct{})
 	}
-}
-
-// Primary registers table to use shard's primary pool
-func (tsb *TableShardBuilder) Primary() error {
-	return tsb.register("primary")
-}
-
-// Read registers table to use shard's read pool
-func (tsb *TableShardBuilder) Read() error {
-	return tsb.register("read")
-}
-
-// Write registers table to use shard's write pool
-func (tsb *TableShardBuilder) Write() error {
-	return tsb.register("write")
-}
-
-// Standalone registers table to use shard's standalone pool
-func (tsb *TableShardBuilder) Standalone() error {
-	return tsb.register("standalone")
-}
-
-// register is the internal method to register table with shard and role
-func (tsb *TableShardBuilder) register(role string) error {
-	tableReg.mu.Lock()
-	defer tableReg.mu.Unlock()
-
-	// Check if DB registry mode is global
-	dbMode := GetMode()
-	if dbMode == "global" {
-		return fmt.Errorf("cannot register table to shard '%s' when DB registry mode is 'global'", tsb.shardName)
+	if tm.Roles["primary"] == nil {
+		tm.Roles["primary"] = make(map[string]struct{})
 	}
 
-	if _, exists := tableReg.tables[tsb.tableName]; exists {
-		return fmt.Errorf("table %s already registered", tsb.tableName)
+	if _, exists := tm.Roles["primary"][shard]; exists {
+		return fmt.Errorf("table %s already has primary for shard %s", tm.TableName, shard)
 	}
 
-	tableReg.tables[tsb.tableName] = &TableShardMapping{
-		shardName: tsb.shardName,
-		role:      role,
-	}
+	tm.Roles["primary"][shard] = struct{}{}
 	return nil
 }
 
+func (tm *TableModel) Read(shard string) error {
+	if tm.Roles == nil {
+		tm.Roles = make(map[string]map[string]struct{})
+	}
+	if tm.Roles["read"] == nil {
+		tm.Roles["read"] = make(map[string]struct{})
+	}
+	tm.Roles["read"][shard] = struct{}{}
+	return nil
+}
+
+func (tm *TableModel) Write(shard string) error {
+	if tm.Roles == nil {
+		tm.Roles = make(map[string]map[string]struct{})
+	}
+	if tm.Roles["write"] == nil {
+		tm.Roles["write"] = make(map[string]struct{})
+	}
+	tm.Roles["write"][shard] = struct{}{}
+	return nil
+}
+
+func (tm *TableModel) Standalone(shard string) error {
+	if tm.Roles == nil {
+		tm.Roles = make(map[string]map[string]struct{})
+	}
+	if tm.Roles["standalone"] == nil {
+		tm.Roles["standalone"] = make(map[string]struct{})
+	}
+	tm.Roles["standalone"][shard] = struct{}{}
+	return nil
+}
+// Roles returns a slice of role names assigned to this table
+func (tm *TableModel) RoleNames() []string {
+	tmRoles := make([]string, 0, len(tm.Roles))
+	for role := range tm.Roles {
+		tmRoles = append(tmRoles, role)
+	}
+	return tmRoles
+}
+
+// IsGlobal returns true if the table has no shard-specific roles
+func (tm *TableModel) IsGlobal() bool {
+	// global table has no shard-specific roles
+	return len(tm.Roles) == 0
+}
+
+
+
+// GetModel returns a registered TableModel by table name
+func GetModel(tableName string) (*TableModel, bool) {
+	tableReg.mu.RLock()
+	defer tableReg.mu.RUnlock()
+	t, exists := tableReg.models[tableName]
+	return t, exists
+}
+
+
+
 // GetTableMapping retrieves the shard mapping for a table
-func GetTableMapping(tableName string) (*TableShardMapping, error) {
+func GetTableMapping(tableName string) (*TableModel, error) {
 	tableReg.mu.RLock()
 	defer tableReg.mu.RUnlock()
 
-	mapping, exists := tableReg.tables[tableName]
+	mapping, exists := tableReg.models[tableName]
 	if !exists {
 		return nil, fmt.Errorf("table %s not registered", tableName)
 	}
@@ -277,25 +297,15 @@ func GetTableMapping(tableName string) (*TableShardMapping, error) {
 }
 
 // GetTableMappingByModel retrieves the shard mapping using a model struct
-func GetTableMappingByModel(model interface{}) (*TableShardMapping, error) {
+func GetTableMappingByModel(model interface{}) (*TableModel, error) {
 	tableName := getTableName(model)
 	return GetTableMapping(tableName)
 }
 
 // ShardName returns the shard name for this mapping
-func (tsm *TableShardMapping) ShardName() string {
-	return tsm.shardName
-}
 
 // Role returns the role for this mapping
-func (tsm *TableShardMapping) Role() string {
-	return tsm.role
-}
 
-// IsGlobal returns true if the table uses global pools
-func (tsm *TableShardMapping) IsGlobal() bool {
-	return tsm.shardName == ""
-}
 
 
 // ListTables returns a slice of all registered table names
@@ -326,11 +336,16 @@ func UnregisterTable(tableName string) error {
 	tableReg.mu.Lock()
 	defer tableReg.mu.Unlock()
 
-	if _, exists := tableReg.tables[tableName]; !exists {
-		return errors.New("table not registered")
+	table, exists := tableReg.models[tableName]
+	if !exists {
+		return fmt.Errorf("table %s not registered", tableName)
 	}
 
-	delete(tableReg.tables, tableName)
+	// Clear roles and fields for safety
+	table.Roles = nil
+	table.Fields = nil
+
+	// Remove from registry
 	delete(tableReg.models, tableName)
 	return nil
 }
@@ -345,4 +360,11 @@ func GetAllModels() []interface{} {
 		models = append(models, model)
 	}
 	return models
+}
+
+// resetTables clears the table registry
+func resetTables() {
+	tableReg.mu.Lock()
+	defer tableReg.mu.Unlock()
+	tableReg.models = make(map[string]*TableModel)
 }

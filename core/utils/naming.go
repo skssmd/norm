@@ -1,6 +1,9 @@
 package utils
 
-import "strings"
+import (
+	"reflect"
+	"strings"
+)
 
 // ToSnakeCase converts CamelCase to snake_case
 // Handles consecutive uppercase letters correctly (ID -> id, not i_d)
@@ -26,4 +29,23 @@ func Pluralize(s string) string {
 		return s + "es"
 	}
 	return s + "s"
+}
+
+
+func ResolveColumnName(sf reflect.StructField) string {
+	column := ToSnakeCase(sf.Name)
+
+	normTag := sf.Tag.Get("norm")
+	if normTag == "" {
+		return column
+	}
+
+	tags := ParseNormTags(normTag)
+
+	if name, ok := tags["name"]; ok {
+		if s, ok := name.(string); ok && s != "" {
+			return s
+		}
+	}
+	return column
 }
