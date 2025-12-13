@@ -5,16 +5,26 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/skssmd/norm/core/driver"
 	"github.com/skssmd/norm/core/registry"
 )
 
 // Query represents an executable query with routing
 type Query struct {
-	builder *QueryBuilder
-	table   string
-	model   interface{}
+	builder     *QueryBuilder
+	table       string
+	model       interface{}
+	joinContext *JoinContext
+}
+
+// JoinContext holds information for join operations
+type JoinContext struct {
+	Tables []string
+	Keys   []string
+	Models []interface{}
 }
 
 // From creates a new query with routing from model
@@ -27,31 +37,116 @@ func (q *Query) From(model interface{}) *Query {
 
 // Table sets the table name or model for the query
 // Accepts either string (table name) or struct (model with data)
-func (q *Query) Table(tableNameOrModel interface{}) *Query {
-	switch v := tableNameOrModel.(type) {
-	case string:
-		// String-based: just set table name
-		q.table = v
-		q.builder = &QueryBuilder{
-			tableName:    v,
-			columns:      []string{},
-			whereArgs:    []interface{}{},
-			updateFields: make(map[string]interface{}),
-			insertFields: make(map[string]interface{}),
+// Table sets the table name or model for the query
+// Accepts either string (table name) or struct (model with data)
+// Supports join syntax: Table("users", "id", "orders", "user_id")
+func (q *Query) Table(args ...interface{}) *Query {
+	if len(args) == 0 {
+		return q
+	}
+
+	// Single argument case (standard query)
+	if len(args) == 1 {
+		tableNameOrModel := args[0]
+		switch v := tableNameOrModel.(type) {
+		case string:
+			// String-based: just set table name
+			q.table = v
+			q.builder = &QueryBuilder{
+				tableName:    v,
+				columns:      []string{},
+				whereArgs:    []interface{}{},
+				updateFields: make(map[string]interface{}),
+				insertFields: make(map[string]interface{}),
+				joins:        []JoinDefinition{},
+			}
+		default:
+			// Struct-based: extract table name and non-zero fields
+			tableName := getTableNameFromModel(v)
+			q.table = tableName
+			q.builder = &QueryBuilder{
+				tableName:    tableName,
+				model:        v,
+				columns:      []string{},
+				whereArgs:    []interface{}{},
+				updateFields: make(map[string]interface{}),
+				insertFields: make(map[string]interface{}),
+				joins:        []JoinDefinition{},
+			}
 		}
-	default:
-		// Struct-based: extract table name and non-zero fields
-		tableName := getTableNameFromModel(v)
-		q.table = tableName
+		return q
+	}
+
+	// Join case
+	q.joinContext = &JoinContext{
+		Tables: make([]string, 0),
+		Keys:   make([]string, 0),
+		Models: make([]interface{}, 0),
+	}
+
+	// Parse args in pairs (Table, Key)
+	for i := 0; i < len(args); i += 2 {
+		if i+1 >= len(args) {
+			break // Should handle error, but for now ignore incomplete pair
+		}
+
+		tableArg := args[i]
+		keyArg := args[i+1]
+
+		var tableName string
+		var model interface{}
+
+		// Handle Table argument
+		switch v := tableArg.(type) {
+		case string:
+			tableName = v
+		default:
+			tableName = getTableNameFromModel(v)
+			model = v
+		}
+
+		// Handle Key argument
+		var keyName string
+		switch v := keyArg.(type) {
+		case string:
+			keyName = v
+		default:
+			// Extract field name from pointer if possible, or use struct tag
+			// For now assume string or implement pointer extraction later
+			// If it's a pointer to a field, we need to resolve it
+			// This requires the model to be set
+			if model != nil {
+				// Try to resolve field name from pointer
+				// This is complex without the builder context yet
+				// For now, assume string keys for simplicity in this step
+				keyName = fmt.Sprintf("%v", v)
+			} else {
+				keyName = fmt.Sprintf("%v", v)
+			}
+		}
+
+		q.joinContext.Tables = append(q.joinContext.Tables, tableName)
+		q.joinContext.Keys = append(q.joinContext.Keys, keyName)
+		q.joinContext.Models = append(q.joinContext.Models, model)
+	}
+
+	// Initialize builder with the first table
+	if len(q.joinContext.Tables) > 0 {
+		firstTable := q.joinContext.Tables[0]
+		firstModel := q.joinContext.Models[0]
+
+		q.table = firstTable
 		q.builder = &QueryBuilder{
-			tableName:    tableName,
-			model:        v,
+			tableName:    firstTable,
+			model:        firstModel,
 			columns:      []string{},
 			whereArgs:    []interface{}{},
 			updateFields: make(map[string]interface{}),
 			insertFields: make(map[string]interface{}),
+			joins:        []JoinDefinition{},
 		}
 	}
+
 	return q
 }
 
@@ -406,38 +501,41 @@ func (q *Query) Exec(ctx ...context.Context) (int64, error) {
 
 // First executes query and returns first row
 func (q *Query) First(ctx context.Context, dest interface{}) error {
-	pool, err := q.getPool()
-	if err != nil {
-		return err
+	if q.joinContext != nil {
+		return q.executeJoin(ctx, dest, true) // true for single row
 	}
-
-	// Set limit to 1 for First()
-	q.builder.Limit(1)
-
-	sql, args, err := q.builder.Build()
-	if err != nil {
-		return err
-	}
-
-	row := pool.Pool.QueryRow(ctx, sql, args...)
-	// Scanning will be handled by the caller
-	// For now, return the row interface
-	_ = row
-
-	// TODO: Implement proper scanning based on dest type
-	return fmt.Errorf("First() scanning not yet implemented")
+	return q.executeStandard(ctx, dest, true)
 }
 
 // All executes query and returns all rows
 func (q *Query) All(ctx context.Context, dest interface{}) error {
+	if q.joinContext != nil {
+		return q.executeJoin(ctx, dest, false)
+	}
+	return q.executeStandard(ctx, dest, false)
+}
+
+// executeStandard executes a standard single-table query
+func (q *Query) executeStandard(ctx context.Context, dest interface{}, singleRow bool) error {
 	pool, err := q.getPool()
 	if err != nil {
 		return err
 	}
 
+	if singleRow {
+		q.builder.Limit(1)
+	}
+
 	sql, args, err := q.builder.Build()
 	if err != nil {
 		return err
+	}
+
+	if singleRow {
+		row := pool.Pool.QueryRow(ctx, sql, args...)
+		// TODO: Implement scanning
+		_ = row
+		return fmt.Errorf("First() scanning not yet implemented")
 	}
 
 	rows, err := pool.Pool.Query(ctx, sql, args...)
@@ -446,9 +544,402 @@ func (q *Query) All(ctx context.Context, dest interface{}) error {
 	}
 	defer rows.Close()
 
-	// TODO: Implement proper scanning based on dest type
+	// If dest is nil, print results for demo purposes
+	if dest == nil {
+		results, err := scanRowsToMap(rows)
+		if err != nil {
+			return fmt.Errorf("failed to scan rows: %w", err)
+		}
+
+		fmt.Printf("\nQuery Results (%d rows):\n", len(results))
+		if len(results) > 0 {
+			// Get headers from first row
+			headers := make([]string, 0, len(results[0]))
+			for k := range results[0] {
+				headers = append(headers, k)
+			}
+			sort.Strings(headers)
+
+			// Print headers
+			for _, h := range headers {
+				fmt.Printf("%-20s | ", h)
+			}
+			fmt.Println()
+			fmt.Println(strings.Repeat("-", len(headers)*23))
+
+			// Print rows
+			for _, row := range results {
+				for _, h := range headers {
+					val := fmt.Sprintf("%v", row[h])
+					if len(val) > 18 {
+						val = val[:15] + "..."
+					}
+					fmt.Printf("%-20s | ", val)
+				}
+				fmt.Println()
+			}
+		}
+		return nil
+	}
+
+	// TODO: Implement scanning into dest
 	_ = rows
 	return fmt.Errorf("All() scanning not yet implemented")
+}
+
+// scanRowsToMap scans rows into a slice of maps
+func scanRowsToMap(rows pgx.Rows) ([]map[string]interface{}, error) {
+	fields := rows.FieldDescriptions()
+	var results []map[string]interface{}
+
+	for rows.Next() {
+		values, err := rows.Values()
+		if err != nil {
+			return nil, err
+		}
+
+		row := make(map[string]interface{})
+		for i, field := range fields {
+			row[string(field.Name)] = values[i]
+		}
+		results = append(results, row)
+	}
+	return results, nil
+}
+
+// executeJoin executes a join query (either native or app-side)
+func (q *Query) executeJoin(ctx context.Context, dest interface{}, singleRow bool) error {
+	if len(q.joinContext.Tables) < 2 {
+		return fmt.Errorf("join requires at least 2 tables")
+	}
+
+	// 1. Check co-location
+	coLocated, err := q.isCoLocated()
+	if err != nil {
+		return err
+	}
+
+	// 2. Decide Native vs App-Side
+	if coLocated {
+		// Configure Native Join
+		for i := 1; i < len(q.joinContext.Tables); i++ {
+			t1 := q.joinContext.Tables[i-1]
+			k1 := q.joinContext.Keys[i-1]
+			t2 := q.joinContext.Tables[i]
+			k2 := q.joinContext.Keys[i]
+
+			onClause := fmt.Sprintf("%s.%s = %s.%s", t1, k1, t2, k2)
+			
+			q.builder.joins = append(q.builder.joins, JoinDefinition{
+				Table: t2,
+				On:    onClause,
+				Type:  "INNER",
+			})
+		}
+		return q.executeStandard(ctx, dest, singleRow)
+	}
+
+	// 3. App-Side Join
+	return q.executeAppSideJoin(ctx, dest, singleRow)
+}
+
+// isCoLocated checks if all tables in the join context are on the same database/shard
+func (q *Query) isCoLocated() (bool, error) {
+	info := registry.GetRegistryInfo()
+	mode := info["mode"].(string)
+
+	if mode == "global" {
+		return true, nil
+	}
+
+	if mode != "shard" {
+		return false, fmt.Errorf("unknown registry mode: %s", mode)
+	}
+
+	// Check shards for each table
+	var firstShard string
+	
+	for i, tableName := range q.joinContext.Tables {
+		tableModel, exists := registry.GetModel(tableName)
+		if !exists {
+			return false, fmt.Errorf("table '%s' not registered", tableName)
+		}
+
+		// Find shard for this table
+		var shardName string
+		found := false
+		for _, shards := range tableModel.Roles {
+			for s := range shards {
+				shardName = s
+				found = true
+				break
+			}
+			if found {
+				break
+			}
+		}
+
+		if !found {
+			return false, fmt.Errorf("no shard found for table '%s'", tableName)
+		}
+
+		if i == 0 {
+			firstShard = shardName
+		} else {
+			if shardName != firstShard {
+				return false, nil // Different shards
+			}
+		}
+	}
+
+	// Check for Skeys
+	for i, tableName := range q.joinContext.Tables {
+		key := q.joinContext.Keys[i]
+		tableModel, _ := registry.GetModel(tableName)
+		if tableModel != nil {
+			for _, field := range tableModel.Fields {
+				if field.Fieldname == key && field.Skey != "" {
+					return false, nil // Force App-Side
+				}
+			}
+		}
+	}
+
+	return true, nil
+}
+
+// executeAppSideJoin executes a join by fetching data from multiple sources and merging
+func (q *Query) executeAppSideJoin(ctx context.Context, dest interface{}, singleRow bool) error {
+	fmt.Println("  🔄 Executing App-Side Join (Distributed/Skey)...")
+
+	// 1. Fetch T1
+	// We need to filter columns for T1
+	t1 := q.joinContext.Tables[0]
+	k1 := q.joinContext.Keys[0]
+	t2 := q.joinContext.Tables[1]
+	k2 := q.joinContext.Keys[1]
+
+	originalCols := q.builder.columns
+	var cols1, cols2 []string
+
+	if len(originalCols) > 0 {
+		for _, col := range originalCols {
+			if strings.HasPrefix(col, t2+".") {
+				cols2 = append(cols2, col)
+			} else {
+				// Assume T1 if T1 prefix or no prefix
+				cols1 = append(cols1, col)
+			}
+		}
+	}
+
+	// Ensure K1 is in cols1 (if we have specific columns)
+	if len(cols1) > 0 {
+		hasK1 := false
+		for _, col := range cols1 {
+			if col == k1 || col == t1+"."+k1 {
+				hasK1 = true
+				break
+			}
+		}
+		if !hasK1 {
+			cols1 = append(cols1, t1+"."+k1)
+		}
+		q.builder.columns = cols1
+	}
+
+	pool1, err := q.getPool()
+	if err != nil {
+		return err
+	}
+
+	sql1, args1, err := q.builder.Build()
+	// Restore original columns just in case
+	q.builder.columns = originalCols
+	if err != nil {
+		return err
+	}
+
+	rows1, err := pool1.Pool.Query(ctx, sql1, args1...)
+	if err != nil {
+		return fmt.Errorf("failed to fetch T1: %w", err)
+	}
+	defer rows1.Close()
+
+	results1, err := scanRowsToMap(rows1)
+	if err != nil {
+		return fmt.Errorf("failed to scan T1: %w", err)
+	}
+
+	if len(results1) == 0 {
+		return nil // No results
+	}
+
+	// 2. Extract keys from T1 results
+	// We assume T1 joins to T2 using T1.K1 = T2.K2
+	// So we need values of K1 from T1 results
+
+	keys := make([]interface{}, 0, len(results1))
+	seen := make(map[interface{}]bool)
+
+	for _, row := range results1 {
+		if val, ok := row[k1]; ok && val != nil {
+			if !seen[val] {
+				keys = append(keys, val)
+				seen[val] = true
+			}
+		}
+	}
+
+	if len(keys) == 0 {
+		return nil // No keys to join
+	}
+
+	// 3. Fetch T2
+	// We need a new query for T2
+	
+	// Ensure K2 is in cols2
+	if len(cols2) > 0 {
+		hasK2 := false
+		for _, col := range cols2 {
+			if col == k2 || col == t2+"."+k2 {
+				hasK2 = true
+				break
+			}
+		}
+		if !hasK2 {
+			cols2 = append(cols2, t2+"."+k2)
+		}
+	} else {
+		// If no specific columns for T2, select *
+		cols2 = []string{"*"}
+	}
+
+	q2 := &Query{
+		builder: &QueryBuilder{
+			tableName: t2,
+			columns:   cols2,
+			whereArgs: []interface{}{},
+			queryType: "select",
+		},
+		table: t2,
+	}
+
+	// Add WHERE K2 IN (...)
+	placeholders := make([]string, len(keys))
+	for i := range keys {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+	}
+	
+	inClause := fmt.Sprintf("%s IN (%s)", k2, strings.Join(placeholders, ", "))
+	q2.Where(inClause, keys...)
+
+	pool2, err := q2.getPool()
+	if err != nil {
+		return fmt.Errorf("failed to get pool for T2: %w", err)
+	}
+
+	sql2, args2, err := q2.builder.Build()
+	if err != nil {
+		return err
+	}
+
+	rows2, err := pool2.Pool.Query(ctx, sql2, args2...)
+	if err != nil {
+		return fmt.Errorf("failed to fetch T2: %w", err)
+	}
+	defer rows2.Close()
+
+	results2, err := scanRowsToMap(rows2)
+	if err != nil {
+		return fmt.Errorf("failed to scan T2: %w", err)
+	}
+
+	// 4. Merge Results
+	// Create a map of T2 results indexed by K2 (normalized to string)
+	t2Map := make(map[string][]map[string]interface{})
+	for _, row := range results2 {
+		if val, ok := row[k2]; ok && val != nil {
+			keyStr := fmt.Sprintf("%v", val)
+			t2Map[keyStr] = append(t2Map[keyStr], row)
+		}
+	}
+
+	// Join T1 and T2
+	var joinedResults []map[string]interface{}
+	
+	for _, r1 := range results1 {
+		val := r1[k1]
+		if val == nil {
+			continue
+		}
+		keyStr := fmt.Sprintf("%v", val)
+		
+		if r2List, ok := t2Map[keyStr]; ok {
+			for _, r2 := range r2List {
+				// Merge r1 and r2
+				merged := make(map[string]interface{})
+				for k, v := range r1 {
+					if strings.Contains(k, ".") {
+						merged[k] = v
+					} else {
+						merged[t1+"."+k] = v
+					}
+				}
+				for k, v := range r2 {
+					if strings.Contains(k, ".") {
+						merged[k] = v
+					} else {
+						merged[t2+"."+k] = v
+					}
+				}
+				joinedResults = append(joinedResults, merged)
+			}
+		}
+	}
+
+	// Print results (Table format)
+	fmt.Printf("\nJoined Results (%d rows):\n", len(joinedResults))
+	if len(joinedResults) > 0 {
+		// Print header
+		// Just print a few columns for demo
+		// Use keys from first row to find suitable columns to print
+		var keys []string
+		for k := range joinedResults[0] {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		
+		// Try to find fullname/bio/total/event_type
+		col1 := ""
+		col2 := ""
+		
+		for _, k := range keys {
+			if strings.Contains(k, "fullname") {
+				col1 = k
+			} else if strings.Contains(k, "bio") || strings.Contains(k, "total") || strings.Contains(k, "event_type") {
+				col2 = k
+			}
+		}
+		
+		if col1 == "" && len(keys) > 0 { col1 = keys[0] }
+		if col2 == "" && len(keys) > 1 { col2 = keys[1] }
+		
+		if col1 != "" && col2 != "" {
+			fmt.Printf("%-30s | %-30s\n", col1, col2)
+			fmt.Println(strings.Repeat("-", 65))
+			
+			for _, row := range joinedResults {
+				v1 := fmt.Sprintf("%v", row[col1])
+				v2 := fmt.Sprintf("%v", row[col2])
+				if len(v1) > 28 { v1 = v1[:25] + "..." }
+				if len(v2) > 28 { v2 = v2[:25] + "..." }
+				fmt.Printf("%-30s | %-30s\n", v1, v2)
+			}
+		}
+	}
+
+	return nil
 }
 
 // Count executes a COUNT query

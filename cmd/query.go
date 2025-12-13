@@ -263,6 +263,110 @@ func RunQueryExamples() {
 		}
 	}
 
+	// ========================================
+	// STEP 6: JOIN QUERIES (Multi-table)
+	// ========================================
+	fmt.Println("\n\n🔗 STEP 6: JOIN QUERIES")
+	fmt.Println(strings.Repeat("-", 60))
+
+	// 1. Populate Orders for Join Test
+	fmt.Println("\n1. Populating orders for join test...")
+	
+	// We need a user ID first. Let's assume ID 1 exists (Alice)
+	// In a real app we'd fetch it, but for this test we know Alice was inserted first
+	// and IDs are auto-incrementing (1, 2, 3...)
+	
+	bulkOrders := []Order{
+		{UserID: 1, Total: 99.99, Status: "completed", Notes: "First order"},
+		{UserID: 1, Total: 149.50, Status: "pending", Notes: "Second order"},
+		{UserID: 2, Total: 29.99, Status: "shipped", Notes: "Bob's order"},
+	}
+
+	rowsAffected, err = norm.Table("orders").
+		BulkInsert(bulkOrders).
+		Exec(ctx)
+	if err != nil {
+		log.Printf("  ❌ Error inserting orders: %v\n", err)
+	} else {
+		fmt.Printf("  ✅ Inserted %d orders\n", rowsAffected)
+	}
+
+	// 2. Perform Join Query
+	fmt.Println("\n2. Performing JOIN query (Users + Orders)...")
+	fmt.Println("   Query: SELECT users.fullname, orders.total FROM users JOIN orders ON users.id = orders.user_id WHERE users.uname = 'alicew'")
+	
+	// Note: We're not scanning results yet, just verifying execution
+	err = norm.Table("users", "id", "orders", "user_id").
+		Select("users.fullname", "orders.total").
+		Where("users.uname = $1", "alicew").
+		All(ctx, nil) // nil dest for now as scanning isn't implemented
+	
+	if err != nil {
+		// We expect an error about scanning not implemented, but the query execution should succeed
+		if strings.Contains(err.Error(), "scanning not yet implemented") {
+			fmt.Println("  ✅ Join query executed successfully (scanning pending implementation)")
+		} else {
+			log.Printf("  ❌ Join query failed: %v\n", err)
+		}
+	} else {
+		fmt.Println("  ✅ Join query executed successfully")
+	}
+
+	// 3. Populate Profiles for Skey Test
+	fmt.Println("\n3. Populating profiles for Skey test...")
+	bulkProfiles := []Profile{
+		{UserID: 1, Bio: "Alice's Bio"},
+		{UserID: 2, Bio: "Bob's Bio"},
+	}
+	_, err = norm.Table("profiles").BulkInsert(bulkProfiles).Exec(ctx)
+	if err != nil {
+		log.Printf("  ❌ Error inserting profiles: %v\n", err)
+	} else {
+		fmt.Println("  ✅ Inserted profiles")
+	}
+
+	// 4. Perform Skey Join Query (User + Profile)
+	// This should use App-Side Join because Profile.UserID is an skey
+	fmt.Println("\n4. Performing Skey JOIN query (Users + Profiles)...")
+	fmt.Println("   Query: SELECT users.fullname, profiles.bio FROM users JOIN profiles ON users.id = profiles.user_id")
+	fmt.Println("   (Should use App-Side Join due to skey)")
+
+	err = norm.Table("users", "id", "profiles", "user_id").
+		Select("users.fullname", "profiles.bio").
+		Where("users.uname = $1", "alicew").
+		All(ctx, nil)
+	
+	if err != nil {
+		log.Printf("  ❌ Skey Join query failed: %v\n", err)
+	} else {
+		fmt.Println("  ✅ Skey Join query executed successfully")
+	}
+
+	// 5. Perform Non-Native Join Query (User + Analytics)
+	// This will only work in Scenario 4 where they are on different shards
+	// In other scenarios, they might be co-located (Native Join) or Analytics might not exist
+	fmt.Println("\n5. Performing Distributed JOIN query (Users + Analytics)...")
+	fmt.Println("   Query: SELECT users.fullname, analytics.event_type FROM users JOIN analytics ON users.id = analytics.user_id")
+	
+	// Insert some analytics data first
+	userID := uint(1)
+	norm.Table("analytics").Insert(Analytics{
+		UserID: &userID,
+		EventType: "login",
+		EventData: "{}",
+	}).Exec(ctx)
+
+	err = norm.Table("users", "id", "analytics", "user_id").
+		Select("users.fullname", "analytics.event_type").
+		Where("users.uname = $1", "alicew").
+		All(ctx, nil)
+
+	if err != nil {
+		log.Printf("  ❌ Distributed Join query failed: %v\n", err)
+	} else {
+		fmt.Println("  ✅ Distributed Join query executed successfully")
+	}
+
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Println("✅ All query examples completed!")
 	fmt.Println(strings.Repeat("=", 60))

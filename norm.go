@@ -50,9 +50,10 @@ func RegisterTable(model interface{}, tableName ...string) *registry.TableModel 
 //
 //	norm.Table("users").Select("id", "name", "email")  // String-based
 //	norm.Table(User{Name: "John", Email: "john@example.com"}).Insert()  // Struct-based (ignores zero values)
-func Table(tableNameOrModel interface{}) *engine.Query {
+//	norm.Table("users", "id", "orders", "user_id") // Join syntax
+func Table(args ...interface{}) *engine.Query {
 	q := &engine.Query{}
-	return q.Table(tableNameOrModel)
+	return q.Table(args...)
 }
 
 // BulkInsert creates a bulk insert builder from model

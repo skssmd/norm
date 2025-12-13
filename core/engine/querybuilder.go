@@ -11,6 +11,13 @@ import (
 	"github.com/skssmd/norm/core/utils"
 )
 
+// JoinDefinition represents a JOIN clause
+type JoinDefinition struct {
+	Table string
+	On    string
+	Type  string // "INNER", "LEFT", "RIGHT"
+}
+
 // QueryBuilder builds SQL queries with a fluent API
 type QueryBuilder struct {
 	tableName       string
@@ -29,6 +36,7 @@ type QueryBuilder struct {
 	limit           int
 	offset          int
 	queryType       string // "select", "update", "delete", "insert", "bulkinsert"
+	joins           []JoinDefinition
 }
 
 // From creates a new query builder for the specified model
@@ -48,6 +56,7 @@ func From(model interface{}) *QueryBuilder {
 		whereArgs:    []interface{}{},
 		updateFields: make(map[string]interface{}),
 		insertFields: make(map[string]interface{}),
+		joins:        []JoinDefinition{},
 	}
 }
 
@@ -373,6 +382,11 @@ func (qb *QueryBuilder) buildSelect() (string, []interface{}, error) {
 
 	sql.WriteString(" FROM ")
 	sql.WriteString(qb.tableName)
+
+	// Add JOIN clauses
+	for _, join := range qb.joins {
+		sql.WriteString(fmt.Sprintf(" %s JOIN %s ON %s", join.Type, join.Table, join.On))
+	}
 
 	if qb.whereClause != "" {
 		sql.WriteString(" WHERE ")

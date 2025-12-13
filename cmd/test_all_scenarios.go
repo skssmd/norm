@@ -30,6 +30,12 @@ type Order struct {
 	CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
 
+type Profile struct {
+	ID     int    `norm:"pk;auto"`
+	UserID int    `norm:"skey:users.id"`
+	Bio    string
+}
+
 type Analytics struct {
 	ID        uint                   `norm:"index;notnull;pk;auto"`
 	UserID    *uint                  `norm:"skey:users.id;ondelete:setnull"` // Soft key - nullable, app-level cascade
@@ -133,7 +139,12 @@ func setupScenario1_GlobalMonolith() {
 	// Register tables (auto-registered as global in global mode)
 	norm.RegisterTable(User{}, "users")
 	norm.RegisterTable(Order{}, "orders")
+	norm.RegisterTable(User{}, "users")
+	norm.RegisterTable(Order{}, "orders")
+	norm.RegisterTable(Profile{}, "profiles")
 	norm.RegisterTable(Log{}, "logs")
+	norm.RegisterTable(Analytics{}, "analytics")
+	norm.RegisterTable(Profile{}, "profiles")
 	fmt.Println("  ✓ Tables registered (global mode)")
 }
 
@@ -172,6 +183,7 @@ func setupScenario2_ReadWriteSplit() {
 	// Register tables (auto-registered as global in global mode)
 	norm.RegisterTable(User{}, "users")
 	norm.RegisterTable(Order{}, "orders")
+	norm.RegisterTable(Profile{}, "profiles")
 	norm.RegisterTable(Analytics{}, "analytics")
 	fmt.Println("  ✓ Tables registered (global mode)")
 }
@@ -227,6 +239,12 @@ func setupScenario3_Sharding() {
 		log.Fatal(err)
 	}
 	fmt.Println("  ✓ Analytics table → shard2 (standalone)")
+
+	err = norm.RegisterTable(Profile{}, "profiles").Primary("shard1")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("  ✓ Profile table → shard1 (primary)")
 }
 
 // setupScenario4_ShardingWithRoles configures shards with table-based read/write roles
@@ -272,6 +290,12 @@ func setupScenario4_ShardingWithRoles() {
 		log.Fatal(err)
 	}
 	fmt.Println("  ✓ Analytics table → Shard2, Role: read")
+
+	err = norm.RegisterTable(Profile{}, "profiles").Primary("shard1")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("  ✓ Profile table → Shard1, Role: primary")
 }
 
 func main() {

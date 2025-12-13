@@ -244,13 +244,13 @@ func (am *AutoMigrator) migratePool(pool *driver.PGPool, poolLabel string) error
 
 		if !existsInDB {
 			// Create new table
-			if err := am.createTable(ctx, pool, tableName); err != nil {
+			if err := am.createTable(ctx, pool, tableName, ""); err != nil {
 				return fmt.Errorf("failed to create table '%s': %w", tableName, err)
 			}
 			fmt.Printf("  ✓ Created table '%s' in %s\n", tableName, poolLabel)
 		} else {
 			// Update existing table
-			if err := am.updateTable(ctx, pool, tableName); err != nil {
+			if err := am.updateTable(ctx, pool, tableName, ""); err != nil {
 				return fmt.Errorf("failed to update table '%s': %w", tableName, err)
 			}
 			fmt.Printf("  ✓ Updated table '%s' in %s\n", tableName, poolLabel)
@@ -291,14 +291,14 @@ ctx := context.Background()
 
 		if !exists {
 			// Create new table
-			if err := am.createTable(ctx, pool, tableName); err != nil {
+			if err := am.createTable(ctx, pool, tableName, shardName); err != nil {
 				migrationErrors = append(migrationErrors, fmt.Errorf("create table '%s': %w", tableName, err))
 				continue
 			}
 			fmt.Printf("  ✓ Created table '%s' in %s\n", tableName, poolLabel)
 		} else {
 			// Update existing table
-			if err := am.updateTable(ctx, pool,  tableName); err != nil {
+			if err := am.updateTable(ctx, pool, tableName, shardName); err != nil {
 				migrationErrors = append(migrationErrors, fmt.Errorf("update table '%s': %w", tableName, err))
 				continue
 			}
@@ -399,8 +399,8 @@ func (am *AutoMigrator) tableExists(ctx context.Context, pool *driver.PGPool, ta
 }
 
 // createTable creates a new table from struct
-func (am *AutoMigrator) createTable(ctx context.Context, pool *driver.PGPool,  tableName string) error {
-	createSQL, indexSQLs := am.generateCreateTableSQL( tableName)
+func (am *AutoMigrator) createTable(ctx context.Context, pool *driver.PGPool, tableName, currentShard string) error {
+	createSQL, indexSQLs := am.generateCreateTableSQL(tableName, currentShard)
 
 	// Execute CREATE TABLE statement
 	_, err := pool.Pool.Exec(ctx, createSQL)
@@ -420,7 +420,7 @@ func (am *AutoMigrator) createTable(ctx context.Context, pool *driver.PGPool,  t
 }
 
 // updateTable updates an existing table schema
-func (am *AutoMigrator) updateTable(ctx context.Context, pool *driver.PGPool, tableName string) error {
+func (am *AutoMigrator) updateTable(ctx context.Context, pool *driver.PGPool, tableName, currentShard string) error {
     // Look up the model from registry
     model, exists := registry.GetTable(tableName)
     if !exists {
@@ -444,16 +444,16 @@ func (am *AutoMigrator) updateTable(ctx context.Context, pool *driver.PGPool, ta
         }
     }
 
-    if err := am.addIndexesAndConstraints(ctx, pool, tableName); err != nil {
-        return err
-    }
+	if err := am.addIndexesAndConstraints(ctx, pool, tableName, currentShard); err != nil {
+		return err
+	}
 
     return nil
 }
 
 
 // addIndexesAndConstraints adds missing indexes and foreign keys to existing tables
-func (am *AutoMigrator) addIndexesAndConstraints(ctx context.Context, pool *driver.PGPool, tableName string) error {
+func (am *AutoMigrator) addIndexesAndConstraints(ctx context.Context, pool *driver.PGPool, tableName, currentShard string) error {
 		table, exists := registry.GetTable(tableName)
 
 	if !exists {
@@ -475,6 +475,25 @@ func (am *AutoMigrator) addIndexesAndConstraints(ctx context.Context, pool *driv
 			fkParts := strings.Split(f.Fkey, ".")
 			if len(fkParts) != 2 {
 				continue
+			}
+
+			// Check if referenced table is on the same shard (if sharding is enabled)
+			if currentShard != "" {
+				refTableName := fkParts[0]
+				refTable, exists := registry.GetTable(refTableName)
+				if exists {
+					isOnShard := false
+					for _, shards := range refTable.Roles {
+						if _, ok := shards[currentShard]; ok {
+							isOnShard = true
+							break
+						}
+					}
+					if !isOnShard {
+						fmt.Printf("    ⚠️  Skipping FK to '%s' (not on shard '%s')\n", refTableName, currentShard)
+						continue
+					}
+				}
 			}
 
 			onDelete := f.OnDelete
@@ -540,7 +559,7 @@ func (am *AutoMigrator) parseStructColumns(table registry.TableModel) map[string
 
 // generateCreateTableSQL generates CREATE TABLE SQL from struct
 // Returns the CREATE TABLE statement and a slice of CREATE INDEX statements
-func (am *AutoMigrator) generateCreateTableSQL(tableName string) (string, []string) {
+func (am *AutoMigrator) generateCreateTableSQL(tableName, currentShard string) (string, []string) {
 	table, exists := registry.GetTable(tableName)
 	if !exists {
 		panic("table not registered: " + tableName)
@@ -577,6 +596,25 @@ func (am *AutoMigrator) generateCreateTableSQL(tableName string) (string, []stri
 			fkParts := strings.Split(f.Fkey, ".")
 			if len(fkParts) != 2 {
 				panic("invalid fkey format for " + tableName + "." + f.Fieldname)
+			}
+
+			// Check if referenced table is on the same shard (if sharding is enabled)
+			if currentShard != "" {
+				refTableName := fkParts[0]
+				refTable, exists := registry.GetTable(refTableName)
+				if exists {
+					isOnShard := false
+					for _, shards := range refTable.Roles {
+						if _, ok := shards[currentShard]; ok {
+							isOnShard = true
+							break
+						}
+					}
+					if !isOnShard {
+						fmt.Printf("    ⚠️  Skipping FK to '%s' (not on shard '%s')\n", refTableName, currentShard)
+						continue
+					}
+				}
 			}
 
 			onDelete := f.OnDelete

@@ -25,6 +25,9 @@ type TableModel struct {
 
 	// role -> set of shards
 	Roles map[string]map[string]struct{}
+
+	// Original model struct (used for migration reflection)
+	Model interface{}
 }
 
 // TableBuilder for fluent API
@@ -85,6 +88,7 @@ func registerTable(model interface{}, tableName string) TableModel {
 	}
 
 	var table TableModel
+	table.Model = model
 	table.Fields = make([]Field, 0, t.NumField())
 
 	for i := 0; i < t.NumField(); i++ {
@@ -357,7 +361,9 @@ func GetAllModels() []interface{} {
 
 	models := make([]interface{}, 0, len(tableReg.models))
 	for _, model := range tableReg.models {
-		models = append(models, model)
+		if model.Model != nil {
+			models = append(models, model.Model)
+		}
 	}
 	return models
 }

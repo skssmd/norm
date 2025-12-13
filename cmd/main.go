@@ -82,6 +82,9 @@ func setupGlobalMonolith() {
 	norm.RegisterTable(Order{}, "orders")
 	fmt.Println("✓ Order table registered")
 
+	norm.RegisterTable(Profile{}, "profiles")
+	fmt.Println("✓ Profile table registered")
+
 	norm.RegisterTable(Log{}, "logs")
 	fmt.Println("✓ Log table registered")
 }
@@ -196,11 +199,18 @@ func setupSharding() {
 	}
 
 	// Register Analytics table to Shard2 with standalone role (won't be migrated)
-	err = norm.RegisterTable(Analytics{}, "analytics").Standalone("shard2")
 	if err != nil {
 		fmt.Println("Analytics shard2 registration error:", err)
 	} else {
 		fmt.Println("✓ Analytics table registered to shard2 (standalone - no migration)")
+	}
+
+	// Register Profile table to Shard1
+	err = norm.RegisterTable(Profile{}, "profiles").Primary("shard1")
+	if err != nil {
+		fmt.Println("Profile shard1 registration error:", err)
+	} else {
+		fmt.Println("✓ Profile table registered to shard1 (primary)")
 	}
 	err = norm.RegisterTable(Log{}, "logs").Standalone("shard2")
 	if err != nil {
@@ -256,12 +266,13 @@ func setupShardingWithReadWrite() {
 
 	// Analytics table: Role = "read" (read-only, reporting)
 	// When querying, the router will use read pool if available, else primary
-	err = norm.RegisterTable(Analytics{}).Read("shard2")
 	if err != nil {
 		fmt.Println("Analytics registration error:", err)
 	} else {
 		fmt.Println("✓ Analytics table → Shard2, Role: read (read-only)")
 	}
+
+	norm.RegisterTable(Profile{}, "profiles").Primary("shard1")
 
 	fmt.Println("\n📝 Note: The 'read' and 'write' roles are stored in the table registry.")
 	fmt.Println("   The query router will use these roles to select the appropriate pool.")
