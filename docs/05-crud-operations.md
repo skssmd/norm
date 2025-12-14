@@ -127,6 +127,14 @@ Norm supports multiple types of joins with automatic routing based on your datab
 2. **App-Side Join (Skey)** - Application-level join for soft-key relationships
 3. **Distributed Join** - Cross-database join for sharded architectures
 
+### Join Strategies Table
+
+| Join Type | Key Type | Execution Flow |
+|-----------|----------|----------------|
+| **Native Join** | `fkey` (Same DB) | **Database Side**: Standard SQL `JOIN` executed by DB engine. |
+| **Non-Native** | `fkey` (Sharded) | **ORM Side**: Engine detetcts and splits queries, fetches from shards, and merges results. |
+| **Soft Key** | `skey` (Any) | **ORM Side**: Engine fetches IDs, queries related map, and links results. |
+
 ### 1. Basic JOIN Syntax
 
 ```go

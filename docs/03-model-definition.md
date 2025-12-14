@@ -170,11 +170,19 @@ CREATE INDEX idx_analytics_user_id ON analytics(user_id);
 
 | Action | Hard Key (`fkey`) | Soft Key (`skey`) |
 |--------|------------------|------------------|
-| `cascade` | DB deletes related rows | App must delete |
-| `setnull` | DB sets to NULL | App must set NULL |
+| `cascade` | DB deletes related rows | **ORM** deletes related rows |
+| `setnull` | DB sets to NULL | **ORM** sets to NULL |
 | `restrict` | DB prevents delete | N/A |
 | `noaction` | DB does nothing | N/A |
 | `setdefault` | DB sets default value | N/A |
+
+### Join Strategies
+
+| Join Type | Key Type | Execution Flow |
+|-----------|----------|----------------|
+| **Native Join** | `fkey` (Same DB) | **Database Side**: Standard SQL `JOIN` executed by DB engine. |
+| **Non-Native** | `fkey` (Sharded) | **ORM Side**: Engine splits queries, fetches from shards, and merges results. |
+| **Soft Key** | `skey` (Any) | **ORM Side**: Engine fetches IDs, queries related map, and links results. |
 
 ---
 
