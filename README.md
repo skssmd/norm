@@ -5,7 +5,7 @@
   |_|\_| \___/ |_|_\|_|  |_|  
                               
         .-"""-.
-       /   _   \   [ norm: The Scalable Go ORM For Postgres]
+       /   _   \   [ norm: The Scalable Go ORM and Database Orchestrator For Postgres]
       |  (o)_(o)|  
       |   (_)   |   + Automatic Routing
      / \   U   / \  + R/W Separation
