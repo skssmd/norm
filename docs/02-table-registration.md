@@ -81,15 +81,15 @@ import (
 
 // Define your models
 type User struct {
-    ID        uint      `norm:"index;notnull;pk"`
-    Email     string    `norm:"unique;notnull"`
-    Name      string    `norm:"notnull"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
+    Email     string    `norm:"name:useremail;unique;notnull"`
+    Name      string    `norm:"name:fullname;notnull"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
 
 type Order struct {
-    ID        uint      `norm:"index;notnull;pk"`
-    UserID    uint      `norm:"fkey:users.id;ondelete:cascade"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
+    UserID    uint      `norm:"index;notnull;fkey:users.id;ondelete:cascade"`
     Total     float64   `norm:"notnull"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
@@ -128,32 +128,32 @@ import (
 
 // User data models
 type User struct {
-    ID        uint      `norm:"index;notnull;pk"`
-    Email     string    `norm:"unique;notnull"`
-    Name      string    `norm:"notnull"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
+    Email     string    `norm:"name:useremail;unique;notnull"`
+    Name      string    `norm:"name:fullname;notnull"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
 
 type Order struct {
-    ID        uint      `norm:"index;notnull;pk"`
-    UserID    uint      `norm:"fkey:users.id;ondelete:cascade"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
+    UserID    uint      `norm:"index;notnull;fkey:users.id;ondelete:cascade"`
     Total     float64   `norm:"notnull"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
 
 // Analytics models
 type Analytics struct {
-    ID        uint      `norm:"index;notnull;pk"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
     UserID    *uint     `norm:"skey:users.id;ondelete:setnull"`
-    EventType string    `norm:"max:100"`
+    EventType string    `norm:"index;notnull;max:100"`
     EventData string    `norm:"type:JSONB"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
 
 type Log struct {
-    ID        uint      `norm:"index;notnull;pk"`
-    Level     string    `norm:"max:20"`
-    Message   string    `norm:"text"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
+    Level     string    `norm:"index;notnull;max:20"`
+    Message   string    `norm:"text;notnull"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
 
@@ -217,16 +217,16 @@ import (
 
 // Shared models across all tenants
 type User struct {
-    ID        uint   `norm:"index;notnull;pk"`
+    ID        uint   `norm:"index;notnull;pk;auto"`
     TenantID  string `norm:"index;notnull;max:50"`
-    Email     string `norm:"unique;notnull"`
-    Name      string `norm:"notnull"`
+    Email     string `norm:"name:useremail;unique;notnull"`
+    Name      string `norm:"name:fullname;notnull"`
 }
 
 type Order struct {
-    ID        uint   `norm:"index;notnull;pk"`
+    ID        uint   `norm:"index;notnull;pk;auto"`
     TenantID  string `norm:"index;notnull;max:50"`
-    UserID    uint   `norm:"fkey:users.id;ondelete:cascade"`
+    UserID    uint   `norm:"index;notnull;fkey:users.id;ondelete:cascade"`
     Total     float64 `norm:"notnull"`
 }
 
@@ -292,26 +292,26 @@ import (
 
 // Heavy write table
 type Order struct {
-    ID        uint      `norm:"index;notnull;pk"`
-    UserID    uint      `norm:"fkey:users.id"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
+    UserID    uint      `norm:"index;notnull;fkey:users.id"`
     Total     float64   `norm:"notnull"`
-    Status    string    `norm:"max:20"`
+    Status    string    `norm:"max:20;default:'pending'"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
 
 // Heavy read table
 type Analytics struct {
-    ID        uint      `norm:"index;notnull;pk"`
-    EventType string    `norm:"max:100"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
+    EventType string    `norm:"index;notnull;max:100"`
     EventData string    `norm:"type:JSONB"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
 
 // Balanced read/write
 type User struct {
-    ID        uint      `norm:"index;notnull;pk"`
-    Email     string    `norm:"unique;notnull"`
-    Name      string    `norm:"notnull"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
+    Email     string    `norm:"name:useremail;unique;notnull"`
+    Name      string    `norm:"name:fullname;notnull"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
 

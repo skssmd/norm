@@ -87,9 +87,9 @@ import (
 )
 
 type User struct {
-    ID    uint   `norm:"index;notnull;pk"`
-    Email string `norm:"unique;notnull"`
-    Name  string `norm:"notnull"`
+    ID    uint   `norm:"index;notnull;pk;auto"`
+    Email string `norm:"name:useremail;unique;notnull"`
+    Name  string `norm:"name:fullname;notnull"`
 }
 
 func main() {
@@ -174,15 +174,15 @@ import (
 
 // Define models
 type User struct {
-    ID        uint      `norm:"index;notnull;pk"`
-    Email     string    `norm:"unique;notnull"`
-    Name      string    `norm:"notnull"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
+    Email     string    `norm:"name:useremail;unique;notnull"`
+    Name      string    `norm:"name:fullname;notnull"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
 
 type Order struct {
-    ID        uint      `norm:"index;notnull;pk"`
-    UserID    uint      `norm:"fkey:users.id;ondelete:cascade;notnull"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
+    UserID    uint      `norm:"index;notnull;fkey:users.id;ondelete:cascade"`
     Total     float64   `norm:"notnull"`
     Status    string    `norm:"max:20;default:'pending'"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
@@ -191,8 +191,8 @@ type Order struct {
 func main() {
     // Setup
     norm.Register(dsn).Primary()
-    norm.Table(User{})
-    norm.Table(Order{})
+    norm.RegisterTable(User{}, "users")
+    norm.RegisterTable(Order{}, "orders")
     
     // Run migrations
     norm.Norm()
@@ -239,9 +239,9 @@ CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
 **Before:**
 ```go
 type User struct {
-    ID        uint      `norm:"index;notnull;pk"`
-    Email     string    `norm:"unique;notnull"`
-    Name      string    `norm:"notnull"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
+    Email     string    `norm:"name:useremail;unique;notnull"`
+    Name      string    `norm:"name:fullname;notnull"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
 ```
@@ -249,9 +249,9 @@ type User struct {
 **After:**
 ```go
 type User struct {
-    ID        uint       `norm:"index;notnull;pk"`
-    Email     string     `norm:"unique;notnull"`
-    Name      string     `norm:"notnull"`
+    ID        uint       `norm:"index;notnull;pk;auto"`
+    Email     string     `norm:"name:useremail;unique;notnull"`
+    Name      string     `norm:"name:fullname;notnull"`
     Bio       *string    `norm:"text"`           // NEW: nullable bio
     Age       *uint      `norm:""`               // NEW: nullable age
     CreatedAt time.Time  `norm:"notnull;default:NOW()"`
@@ -294,18 +294,18 @@ ALTER TABLE users ADD COLUMN updated_at TIMESTAMP DEFAULT NOW();
 **Before:**
 ```go
 type User struct {
-    ID    uint   `norm:"index;notnull;pk"`
-    Email string `norm:"unique;notnull"`
-    Name  string `norm:"notnull"`
+    ID    uint   `norm:"index;notnull;pk;auto"`
+    Email string `norm:"name:useremail;unique;notnull"`
+    Name  string `norm:"name:fullname;notnull"`
 }
 ```
 
 **After:**
 ```go
 type User struct {
-    ID    uint   `norm:"index;notnull;pk"`
-    Email string `norm:"index;unique;notnull"` // Added index tag
-    Name  string `norm:"index;notnull"`        // Added index tag
+    ID    uint   `norm:"index;notnull;pk;auto"`
+    Email string `norm:"name:useremail;index;unique;notnull"` // Added index tag
+    Name  string `norm:"name:fullname;index;notnull"`        // Added index tag
 }
 ```
 
@@ -334,8 +334,8 @@ CREATE INDEX IF NOT EXISTS idx_users_name ON users(name);
 **Before:**
 ```go
 type Order struct {
-    ID        uint    `norm:"index;notnull;pk"`
-    UserID    uint    `norm:"notnull"` // Just a column
+    ID        uint    `norm:"index;notnull;pk;auto"`
+    UserID    uint    `norm:"index;notnull"` // Just a column
     Total     float64 `norm:"notnull"`
 }
 ```
@@ -343,8 +343,8 @@ type Order struct {
 **After:**
 ```go
 type Order struct {
-    ID        uint    `norm:"index;notnull;pk"`
-    UserID    uint    `norm:"fkey:users.id;ondelete:cascade;notnull"` // Now a FK
+    ID        uint    `norm:"index;notnull;pk;auto"`
+    UserID    uint    `norm:"index;notnull;fkey:users.id;ondelete:cascade"` // Now a FK
     Total     float64 `norm:"notnull"`
 }
 ```
@@ -383,14 +383,14 @@ import (
 )
 
 type User struct {
-    ID    uint   `norm:"index;notnull;pk"`
-    Email string `norm:"unique;notnull"`
-    Name  string `norm:"notnull"`
+    ID    uint   `norm:"index;notnull;pk;auto"`
+    Email string `norm:"name:useremail;unique;notnull"`
+    Name  string `norm:"name:fullname;notnull"`
 }
 
 type Analytics struct {
-    ID        uint   `norm:"index;notnull;pk"`
-    EventType string `norm:"max:100"`
+    ID        uint   `norm:"index;notnull;pk;auto"`
+    EventType string `norm:"index;notnull;max:100"`
     EventData string `norm:"type:JSONB"`
 }
 
@@ -400,8 +400,8 @@ func main() {
     norm.Register(dsn2).Shard("shard2").Standalone()
     
     // Register tables to shards
-    norm.RegisterTable(User{}, "users").Shard("shard1").Primary()
-    norm.RegisterTable(Analytics{}, "analytics").Shard("shard2").Standalone()
+    norm.RegisterTable(User{}, "users").Primary("shard1")
+    norm.RegisterTable(Analytics{}, "analytics").Standalone("shard2")
     
     // Run migrations (parallel)
     norm.Norm()
@@ -543,9 +543,9 @@ import "time"
 // Version: 1.2.0
 // Added: bio, age fields
 type User struct {
-    ID        uint       `norm:"index;notnull;pk"`
-    Email     string     `norm:"unique;notnull"`
-    Name      string     `norm:"notnull"`
+    ID        uint       `norm:"index;notnull;pk;auto"`
+    Email     string     `norm:"name:useremail;unique;notnull"`
+    Name      string     `norm:"name:fullname;notnull"`
     Bio       *string    `norm:"text"`      // v1.2.0
     Age       *uint      `norm:""`          // v1.2.0
     CreatedAt time.Time  `norm:"notnull;default:NOW()"`
@@ -584,15 +584,15 @@ psql -h localhost -U postgres mydb < backup_20241209.sql
 ```go
 // ✅ Good - new column is nullable
 type User struct {
-    ID    uint    `norm:"index;notnull;pk"`
-    Email string  `norm:"unique;notnull"`
+    ID    uint    `norm:"index;notnull;pk;auto"`
+    Email string  `norm:"name:useremail;unique;notnull"`
     Bio   *string `norm:"text"` // NEW: nullable
 }
 
 // ❌ Bad - new column is NOT NULL (fails if data exists)
 type User struct {
-    ID    uint   `norm:"index;notnull;pk"`
-    Email string `norm:"unique;notnull"`
+    ID    uint   `norm:"index;notnull;pk;auto"`
+    Email string `norm:"name:useremail;unique;notnull"`
     Bio   string `norm:"text;notnull"` // ERROR: existing rows have no value
 }
 ```
@@ -602,16 +602,16 @@ type User struct {
 ```go
 // ✅ Good - index on frequently queried columns
 type User struct {
-    ID    uint   `norm:"index;notnull;pk"`
-    Email string `norm:"index;unique;notnull"` // Searched often
-    Name  string `norm:"notnull"`              // Not indexed (rarely searched)
+    ID    uint   `norm:"index;notnull;pk;auto"`
+    Email string `norm:"name:useremail;index;unique;notnull"` // Searched often
+    Name  string `norm:"name:fullname;notnull"`              // Not indexed (rarely searched)
 }
 
 // ❌ Bad - too many indexes (slows writes)
 type User struct {
-    ID    uint   `norm:"index;notnull;pk"`
-    Email string `norm:"index;unique;notnull"`
-    Name  string `norm:"index;notnull"`        // Unnecessary
+    ID    uint   `norm:"index;notnull;pk;auto"`
+    Email string `norm:"name:useremail;index;unique;notnull"`
+    Name  string `norm:"name:fullname;index;notnull"`        // Unnecessary
     Bio   string `norm:"index;text"`           // Unnecessary
 }
 ```
@@ -626,8 +626,8 @@ func main() {
     
     // Setup
     norm.Register(dsn).Primary()
-    norm.Table(User{})
-    norm.Table(Order{})
+    norm.RegisterTable(User{}, "users")
+    norm.RegisterTable(Order{}, "orders")
     
     // Run migrations
     norm.Norm()
@@ -744,8 +744,8 @@ No tables registered for Shard:shard1:primary
 **Solution:**
 ```go
 // Make sure to assign tables to shards
-norm.RegisterTable(User{}, "users").Shard("shard1").Primary()
-norm.RegisterTable(Order{}, "orders").Shard("shard1").Primary()
+norm.RegisterTable(User{}, "users").Primary("shard1")
+norm.RegisterTable(Order{}, "orders").Primary("shard1")
 ```
 
 ---
@@ -757,7 +757,7 @@ norm.RegisterTable(Order{}, "orders").Shard("shard1").Primary()
 ```
 1. Define Models → Go structs with norm tags
 2. Register DB   → norm.Register(dsn)
-3. Register Tables → norm.Table(Model{})
+3. Register Tables → norm.RegisterTable(Model{}, "table_name")
 4. Run Migrations → norm.Norm()
 5. Schema Updated → Tables/columns/indexes created
 ```

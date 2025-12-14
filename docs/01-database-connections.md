@@ -28,8 +28,8 @@ All connections are registered through the `norm.Register(dsn)` function, which 
 
 | Method | Description | Use Case |
 |--------|-------------|----------|
-| `Primary()` | Main database connection | Single database setup |
-| `Replica()` | Read replica connection | Downtime fallback |
+| `Primary()` | Main database connection | All reads and writes |
+| `Replica()` | Replica connection for failover | High availability fallback |
 
 ### Read/Write Split Connections
 
@@ -94,8 +94,8 @@ func main() {
     }
     
     // Tables are automatically registered as global
-    norm.Table(User{})
-    norm.Table(Order{})
+    norm.RegisterTable(User{}, "users")
+    norm.RegisterTable(Order{}, "orders")
     
     // Run migrations
     norm.Norm()
@@ -109,9 +109,9 @@ func main() {
 
 ---
 
-### Scenario 2: Primary with Read Replicas
+### Scenario 2: Primary with Replicas (High Availability)
 
-**Use Case:** Applications with high read traffic that need to scale reads.
+**Use Case:** Applications that need high availability and automatic failover.
 
 ```go
 package main
@@ -122,20 +122,20 @@ import (
 )
 
 func main() {
-    // Primary database (for writes)
+    // Primary database (for all operations)
     dsnPrimary := "postgresql://postgres:password@primary-db:5432/myapp"
     
-    // Read replicas (for reads)
+    // Replicas (for failover/high availability)
     dsnReplica1 := "postgresql://postgres:password@replica1-db:5432/myapp"
     dsnReplica2 := "postgresql://postgres:password@replica2-db:5432/myapp"
     
-    // Register primary connection
+    // Register primary connection (handles all operations)
     err := norm.Register(dsnPrimary).Primary()
     if err != nil {
         log.Fatal("Failed to register primary:", err)
     }
     
-    // Register read replicas
+    // Register replicas (for automatic failover)
     err = norm.Register(dsnReplica1).Replica()
     if err != nil {
         log.Fatal("Failed to register replica 1:", err)
@@ -147,9 +147,9 @@ func main() {
     }
     
     // Register tables
-    norm.Table(User{})
-    norm.Table(Order{})
-    norm.Table(Product{})
+    norm.RegisterTable(User{}, "users")
+    norm.RegisterTable(Order{}, "orders")
+    norm.RegisterTable(Product{}, "products")
     
     // Run migrations (only on primary)
     norm.Norm()
@@ -157,16 +157,16 @@ func main() {
 ```
 
 **What happens:**
-- Writes go to primary database
-- Reads are load-balanced across replicas
+- Primary handles ALL operations (reads and writes)
+- Replicas are used only when primary is unavailable
 - Migrations run only on primary
-- Automatic failover to primary if replicas unavailable
+- Automatic failover to replicas if primary goes down
 
 **Benefits:**
-- ✅ Scales read traffic horizontally
-- ✅ Reduces load on primary database
-- ✅ Improves query performance
-- ✅ High availability for reads
+- ✅ High availability and fault tolerance
+- ✅ Automatic failover on primary failure
+- ✅ Zero downtime during primary maintenance
+- ✅ Data consistency (no replication lag issues)
 
 ---
 
@@ -208,9 +208,9 @@ func main() {
     }
     
     // Register tables
-    norm.Table(User{})
-    norm.Table(Order{})
-    norm.Table(Analytics{})
+    norm.RegisterTable(User{}, "users")
+    norm.RegisterTable(Order{}, "orders")
+    norm.RegisterTable(Analytics{}, "analytics")
     
     // Run migrations
     norm.Norm()
@@ -264,18 +264,18 @@ func main() {
     
     // Register tables to specific shards
     // User and Order tables go to shard1
-    err = norm.Table(User{}).Shard("shard1").Primary()
+    err = norm.RegisterTable(User{}, "users").Primary("shard1")
     if err != nil {
         log.Fatal("Failed to register User to shard1:", err)
     }
     
-    err = norm.Table(Order{}).Shard("shard1").Primary()
+    err = norm.RegisterTable(Order{}, "orders").Primary("shard1")
     if err != nil {
         log.Fatal("Failed to register Order to shard1:", err)
     }
     
     // Analytics table goes to shard2
-    err = norm.Table(Analytics{}).Shard("shard2").Primary()
+    err = norm.RegisterTable(Analytics{}, "analytics").Primary("shard2")
     if err != nil {
         log.Fatal("Failed to register Analytics to shard2:", err)
     }
@@ -340,24 +340,24 @@ func main() {
     }
     
     // Register transactional tables to primary shard
-    err = norm.Table(User{}).Shard("primary").Primary()
+    err = norm.RegisterTable(User{}, "users").Primary("primary")
     if err != nil {
         log.Fatal(err)
     }
     
-    err = norm.Table(Order{}).Shard("primary").Primary()
+    err = norm.RegisterTable(Order{}, "orders").Primary("primary")
     if err != nil {
         log.Fatal(err)
     }
     
     // Register analytics tables to analytics shard
-    err = norm.Table(Analytics{}).Shard("analytics").Standalone()
+    err = norm.RegisterTable(Analytics{}, "analytics").Standalone("analytics")
     if err != nil {
         log.Fatal(err)
     }
     
     // Register log tables to logs shard
-    err = norm.Table(Log{}).Shard("logs").Standalone()
+    err = norm.RegisterTable(Log{}, "logs").Standalone("logs")
     if err != nil {
         log.Fatal(err)
     }
