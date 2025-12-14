@@ -5,7 +5,7 @@ This guide covers how to register and manage database connections in Norm ORM.
 ## Table of Contents
 - [Overview](#overview)
 - [Connection Types](#connection-types)
-- [Registration Methods](#registration-methods)
+- [Registration Syntax](#registration-syntax)
 - [Scenarios](#scenarios)
 - [Best Practices](#best-practices)
 
@@ -36,18 +36,18 @@ All connections are registered through the `norm.Register(dsn)` function, which 
 | Method | Description | Use Case |
 |--------|-------------|----------|
 | `Write()` | Write-only pool | All INSERT/UPDATE/DELETE |
-| `Read()` | Read-only pool | All SELECT queries,Load balancing reads |
+| `Read()` | Read-only pool | All SELECT queries, load balancing reads |
 
 ### Shard Mode Connections
 
 | Method | Description | Use Case |
 |--------|-------------|----------|
 | `Shard(name).Primary()` | Primary shard pool | Transactional data |
-| `Shard(name).Standalone()` | Standalone shard pool | Isolated data |
+| `Shard(name).Standalone(tables...)` | Standalone shard pool | Isolated data (analytics, logs) |
 
 ---
 
-## Registration Methods
+## Registration Syntax
 
 ### Basic Syntax
 
@@ -93,12 +93,7 @@ func main() {
         log.Fatal("Failed to register primary:", err)
     }
     
-    // Tables are automatically registered as global
-    norm.RegisterTable(User{}, "users")
-    norm.RegisterTable(Order{}, "orders")
-    
-    // Run migrations
-    norm.Norm()
+    log.Println("✅ Database connected successfully")
 }
 ```
 
@@ -146,20 +141,13 @@ func main() {
         log.Fatal("Failed to register replica 2:", err)
     }
     
-    // Register tables
-    norm.RegisterTable(User{}, "users")
-    norm.RegisterTable(Order{}, "orders")
-    norm.RegisterTable(Product{}, "products")
-    
-    // Run migrations (only on primary)
-    norm.Norm()
+    log.Println("✅ Primary and replicas connected successfully")
 }
 ```
 
 **What happens:**
 - Primary handles ALL operations (reads and writes)
 - Replicas are used only when primary is unavailable
-- Migrations run only on primary
 - Automatic failover to replicas if primary goes down
 
 **Benefits:**
@@ -186,7 +174,7 @@ func main() {
     // Write database (master)
     dsnWrite := "postgresql://postgres:password@write-db:5432/myapp"
     
-    // Read databases (can be different servers or even different DB engines)
+    // Read databases (can be different servers)
     dsnRead1 := "postgresql://postgres:password@read-db1:5432/myapp"
     dsnRead2 := "postgresql://postgres:password@read-db2:5432/myapp"
     
@@ -207,20 +195,13 @@ func main() {
         log.Fatal("Failed to register read pool 2:", err)
     }
     
-    // Register tables
-    norm.RegisterTable(User{}, "users")
-    norm.RegisterTable(Order{}, "orders")
-    norm.RegisterTable(Analytics{}, "analytics")
-    
-    // Run migrations
-    norm.Norm()
+    log.Println("✅ Read/Write pools connected successfully")
 }
 ```
 
 **What happens:**
 - All INSERT/UPDATE/DELETE → Write pool
 - All SELECT → Read pools (load balanced)
-- Migrations run on write pool
 - Read pools can be eventually consistent
 
 **Benefits:**
@@ -262,34 +243,14 @@ func main() {
         log.Fatal("Failed to register shard2:", err)
     }
     
-    // Register tables to specific shards
-    // User and Order tables go to shard1
-    err = norm.RegisterTable(User{}, "users").Primary("shard1")
-    if err != nil {
-        log.Fatal("Failed to register User to shard1:", err)
-    }
-    
-    err = norm.RegisterTable(Order{}, "orders").Primary("shard1")
-    if err != nil {
-        log.Fatal("Failed to register Order to shard1:", err)
-    }
-    
-    // Analytics table goes to shard2
-    err = norm.RegisterTable(Analytics{}, "analytics").Primary("shard2")
-    if err != nil {
-        log.Fatal("Failed to register Analytics to shard2:", err)
-    }
-    
-    // Run migrations (runs on all shards)
-    norm.Norm()
+    log.Println("✅ Shards connected successfully")
 }
 ```
 
 **What happens:**
 - Each shard is an independent database
-- Tables are explicitly assigned to shards
-- Migrations run on each shard independently
-- Application routes queries to correct shard
+- Tables are assigned to shards via table registration (see Table Registration docs)
+- Application routes queries to correct shard automatically
 
 **Benefits:**
 - ✅ Data isolation per tenant/region
@@ -328,42 +289,19 @@ func main() {
     }
     
     // Register standalone analytics shard
-    err = norm.Register(dsnAnalytics).Shard("analytics").Standalone()
+    // Specify table names for automatic routing
+    err = norm.Register(dsnAnalytics).Shard("analytics").Standalone("analytics")
     if err != nil {
         log.Fatal("Failed to register analytics shard:", err)
     }
     
     // Register standalone logs shard
-    err = norm.Register(dsnLogs).Shard("logs").Standalone()
+    err = norm.Register(dsnLogs).Shard("logs").Standalone("logs")
     if err != nil {
         log.Fatal("Failed to register logs shard:", err)
     }
     
-    // Register transactional tables to primary shard
-    err = norm.RegisterTable(User{}, "users").Primary("primary")
-    if err != nil {
-        log.Fatal(err)
-    }
-    
-    err = norm.RegisterTable(Order{}, "orders").Primary("primary")
-    if err != nil {
-        log.Fatal(err)
-    }
-    
-    // Register analytics tables to analytics shard
-    err = norm.RegisterTable(Analytics{}, "analytics").Standalone("analytics")
-    if err != nil {
-        log.Fatal(err)
-    }
-    
-    // Register log tables to logs shard
-    err = norm.RegisterTable(Log{}, "logs").Standalone("logs")
-    if err != nil {
-        log.Fatal(err)
-    }
-    
-    // Run migrations
-    norm.Norm()
+    log.Println("✅ All shards connected successfully")
 }
 ```
 
@@ -371,7 +309,7 @@ func main() {
 - Primary shard handles OLTP (transactional) data
 - Standalone shards handle OLAP (analytical) data
 - Each shard can be optimized for its workload
-- Migrations run on all shards
+- Standalone pools are registered with table names for automatic routing
 
 **Benefits:**
 - ✅ Separate transactional and analytical workloads
@@ -451,6 +389,7 @@ norm.Register(dsn1).Shard("shard1").Primary()
 norm.Register(dsn2).Shard("shard2").Standalone()
 ```
 
+
 ---
 
 ## Summary
@@ -463,3 +402,11 @@ norm.Register(dsn2).Shard("shard2").Standalone()
 | **Sharding** | Multi-tenant, large scale | High | Very High |
 
 Choose the mode that best fits your application's needs and scale requirements.
+
+---
+
+## Next Steps
+
+- Learn about [Model Definition](./02-model-definition.md) for struct tags and field mapping
+- Explore [Table Registration](./03-table-registration.md) to assign tables to shards
+- See [Migrations](./04-migrations.md) for schema management

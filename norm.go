@@ -64,6 +64,37 @@ func BulkInsert(model interface{}, columns []string, rows [][]interface{}) *engi
 	return engine.BulkInsert(model, columns, rows)
 }
 
+// Raw creates a raw SQL query with explicit shard routing
+// Usage:
+//
+//	norm.Raw("SELECT custom_function()", "shard1")
+//	norm.Raw("SELECT * FROM users WHERE age > $1", "shard1", 25)
+func Raw(query string, shard string, args ...interface{}) *engine.Query {
+	q := &engine.Query{}
+	q.Raw(query, args...)
+	// Set the explicit shard for routing
+	// We need to access the internal field, so we'll use a helper
+	return setRawShard(q, shard)
+}
+
+// setRawShard is a helper to set the rawShard field
+// This is a workaround since rawShard is unexported
+func setRawShard(q *engine.Query, shard string) *engine.Query {
+	// We need to export a method in engine.Query to set this
+	// For now, let's add a SetShard method to Query
+	return q.SetShard(shard)
+}
+
+// Join creates a join context for raw SQL queries
+// This validates that tables are co-located before executing
+// Usage:
+//
+//	norm.Join("users", "orders").Raw("SELECT u.*, o.* FROM users u JOIN orders o ON u.id = o.user_id")
+func Join(table1, table2 string) *engine.Query {
+	q := &engine.Query{}
+	return q.Join(table1, table2)
+}
+
 // Removed F() helper - use field pointers or string literals instead
 // Recommended approaches:
 // 1. Field pointers: From(user).Select(&user.Name, &user.Email)

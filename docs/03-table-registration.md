@@ -95,8 +95,8 @@ type Order struct {
 }
 
 func main() {
-    // Register database
-    norm.Register(dsn).Primary()
+    // Assumes database is already registered via norm.Register(dsn).Primary()
+    // See Database Connections documentation
     
     // Register tables - automatically global
     norm.RegisterTable(User{}, "users")
@@ -158,9 +158,10 @@ type Log struct {
 }
 
 func main() {
-    // Register shards
-    norm.Register(dsn1).Shard("transactional").Primary()
-    norm.Register(dsn2).Shard("analytics").Standalone()
+    // Assumes shards are already registered:
+    // norm.Register(dsn1).Shard("transactional").Primary()
+    // norm.Register(dsn2).Shard("analytics").Standalone()
+    // See Database Connections documentation
     
     // Register transactional tables to shard1
     err := norm.RegisterTable(User{}, "users").Primary("transactional")
@@ -231,24 +232,17 @@ type Order struct {
 }
 
 func main() {
-    // Register shards for different tenant groups
-    tenantShards := map[string]string{
-        "shard_us_east":  "postgresql://user:pass@us-east-db:5432/tenants",
-        "shard_us_west":  "postgresql://user:pass@us-west-db:5432/tenants",
-        "shard_eu":       "postgresql://user:pass@eu-db:5432/tenants",
-    }
+    // Assumes shards are already registered:
+    // norm.Register(dsn).Shard("shard_us_east").Primary()
+    // norm.Register(dsn).Shard("shard_us_west").Primary()
+    // norm.Register(dsn).Shard("shard_eu").Primary()
+    // See Database Connections documentation
     
-    // Register all shards
-    for shardName, dsn := range tenantShards {
-        err := norm.Register(dsn).Shard(shardName).Primary()
-        if err != nil {
-            log.Fatal(fmt.Sprintf("Failed to register %s:", shardName), err)
-        }
-    }
+    tenantShards := []string{"shard_us_east", "shard_us_west", "shard_eu"}
     
     // Register tables to all shards
     // (In practice, you'd route to the correct shard based on tenant)
-    for shardName := range tenantShards {
+    for _, shardName := range tenantShards {
         err := norm.RegisterTable(User{}, "users").Primary(shardName)
         if err != nil {
             log.Fatal(err)
@@ -316,8 +310,9 @@ type User struct {
 }
 
 func main() {
-    // Register shard with different pools
-    norm.Register(dsnPrimary).Shard("main").Primary()
+    // Assumes shard is already registered:
+    // norm.Register(dsnPrimary).Shard("main").Primary()
+    // See Database Connections documentation
     
     // Assign tables based on access patterns
     // User: balanced access → primary pool
@@ -402,9 +397,10 @@ func main() {
         log.Fatal("Failed to parse config:", err)
     }
     
-    // Register shards (from environment or config)
-    norm.Register(dsn1).Shard("shard1").Primary()
-    norm.Register(dsn2).Shard("shard2").Standalone()
+    // Assumes shards are already registered:
+    // norm.Register(dsn1).Shard("shard1").Primary()
+    // norm.Register(dsn2).Shard("shard2").Standalone()
+    // See Database Connections documentation
     
     // Register tables based on configuration
     for _, tableConfig := range config.Tables {

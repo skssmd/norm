@@ -554,6 +554,86 @@ func RunQueryExamples() {
 		}
 	}
 
+	// ========================================
+	// STEP 8: RAW SQL QUERIES
+	// ========================================
+	fmt.Println("\n\n🔧 STEP 8: RAW SQL QUERIES")
+	fmt.Println(strings.Repeat("-", 60))
+
+	// Repopulate data for raw SQL tests (Step 7 may have deleted it)
+	fmt.Println("Re-populating data for raw SQL tests...")
+	norm.Table("users").Delete().Exec(ctx)
+	norm.Table("profiles").Delete().Exec(ctx)
+	
+	bulkUsers = []User{
+		{Name: "Alice Williams", Email: "alice@example.com", Username: "alicew"},
+		{Name: "Bob Brown", Email: "bob@example.com", Username: "bobb"},
+	}
+	norm.Table("users").BulkInsert(bulkUsers).Exec(ctx)
+	
+	// Fetch user IDs for profiles
+	var currentUsers2 []User
+	norm.Table("users").Select().All(ctx, &currentUsers2)
+	
+	if len(currentUsers2) > 0 {
+		bulkProfiles = []Profile{}
+		for _, u := range currentUsers2 {
+			bulkProfiles = append(bulkProfiles, Profile{UserID: int(u.ID), Bio: u.Name + "'s Bio"})
+		}
+		norm.Table("profiles").BulkInsert(bulkProfiles).Exec(ctx)
+	}
+
+	// 1. Table-based raw query (automatic routing)
+	fmt.Println("\n1. Table-based raw query (automatic routing)...")
+	var rawUsers []User
+	err = norm.Table("users").
+		Raw("SELECT * FROM users WHERE uname LIKE $1 ORDER BY fullname", "%e%").
+		All(ctx, &rawUsers)
+	
+	if err != nil {
+		log.Panicf("  ❌ Error: %v\n", err)
+	} else {
+		fmt.Printf("  ✅ Found %d users via raw SQL\n", len(rawUsers))
+		for _, u := range rawUsers {
+			fmt.Printf("     - %s\n", u.Name)
+		}
+	}
+
+	// 2. Join-based raw query (co-located tables)
+	fmt.Println("\n2. Join-based raw query (co-located tables)...")
+	type RawUserProfile struct {
+		Fullname string
+		Bio      string
+	}
+	var rawProfiles []RawUserProfile
+	err = norm.Join("users", "profiles").
+		Raw("SELECT u.fullname, p.bio FROM users u JOIN profiles p ON u.id = p.user_id WHERE u.uname = $1", "alicew").
+		All(ctx, &rawProfiles)
+	
+	if err != nil {
+		log.Panicf("  ❌ Error: %v\n", err)
+	} else {
+		fmt.Printf("  ✅ Found %d profiles via raw join SQL\n", len(rawProfiles))
+		for _, p := range rawProfiles {
+			fmt.Printf("     - %s: %s\n", p.Fullname, p.Bio)
+		}
+	}
+
+	// 3. Test error case: Join with non-co-located tables (should fail)
+	fmt.Println("\n3. Testing error case: Join with non-co-located tables...")
+	// This should fail in sharded scenarios where users and analytics are on different shards
+	// In global mode, this will work fine
+	err = norm.Join("users", "analytics").
+		Raw("SELECT u.fullname FROM users u JOIN analytics a ON u.id = a.user_id").
+		All(ctx, nil)
+	
+	if err != nil {
+		// Expected error in sharded mode
+		fmt.Printf("  ⚠️  Expected error (tables may not be co-located): %v\n", err)
+	} else {
+		fmt.Println("  ✅ Query succeeded (tables are co-located)")
+	}
+
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Println("✅ All query examples completed!")
 	fmt.Println(strings.Repeat("=", 60))

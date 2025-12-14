@@ -18,6 +18,9 @@ type Query struct {
 	table       string
 	model       interface{}
 	joinContext *JoinContext
+	rawSQL      string // Raw SQL query
+	rawShard    string // Explicit shard for raw queries
+	rawArgs     []interface{} // Arguments for raw SQL
 }
 
 // JoinContext holds information for join operations
@@ -309,6 +312,47 @@ func (q *Query) OnConflict(conflictColumn string, action string, updateColumns .
 	return q
 }
 
+// Raw sets a raw SQL query for execution
+// Uses the table name (if set) for automatic routing
+// Example: norm.Table("users").Raw("SELECT * FROM users WHERE age > $1", 25)
+func (q *Query) Raw(query string, args ...interface{}) *Query {
+	q.rawSQL = query
+	q.rawArgs = args
+	
+	// Initialize builder if not already set (for table-based routing)
+	if q.builder == nil && q.table != "" {
+		q.builder = &QueryBuilder{
+			tableName: q.table,
+			queryType: "select", // Default to select for raw queries
+		}
+	} else if q.builder != nil {
+		// Set queryType if builder exists
+		q.builder.queryType = "select"
+	}
+	
+	return q
+}
+
+// Join creates a join context for raw SQL queries
+// This is a helper to set up join context without keys (for raw SQL only)
+// Example: norm.Join("users", "orders").Raw("SELECT u.*, o.* FROM users u JOIN orders o ON u.id = o.user_id")
+func (q *Query) Join(table1, table2 string) *Query {
+	q.joinContext = &JoinContext{
+		Tables: []string{table1, table2},
+		Keys:   []string{}, // No keys needed for raw SQL
+		Models: []interface{}{nil, nil},
+	}
+	q.table = table1 // Use first table for routing
+	return q
+}
+
+// SetShard sets the explicit shard for raw SQL routing
+// This is used internally by norm.Raw()
+func (q *Query) SetShard(shard string) *Query {
+	q.rawShard = shard
+	return q
+}
+
 // getPool determines which pool to use based on query type and table
 func (q *Query) getPool() (*driver.PGPool, error) {
 	// Get registry info
@@ -503,6 +547,9 @@ func (q *Query) Exec(ctx ...context.Context) (int64, error) {
 
 // First executes query and returns first row
 func (q *Query) First(ctx context.Context, dest interface{}) error {
+	if q.rawSQL != "" {
+		return q.executeRaw(ctx, dest, true)
+	}
 	if q.joinContext != nil {
 		return q.executeJoin(ctx, dest, true) // true for single row
 	}
@@ -511,10 +558,149 @@ func (q *Query) First(ctx context.Context, dest interface{}) error {
 
 // All executes query and returns all rows
 func (q *Query) All(ctx context.Context, dest interface{}) error {
+	if q.rawSQL != "" {
+		return q.executeRaw(ctx, dest, false)
+	}
 	if q.joinContext != nil {
 		return q.executeJoin(ctx, dest, false)
 	}
 	return q.executeStandard(ctx, dest, false)
+}
+
+// executeRaw executes a raw SQL query with proper routing
+func (q *Query) executeRaw(ctx context.Context, dest interface{}, singleRow bool) error {
+	var pool *driver.PGPool
+	var err error
+
+	// Routing logic based on what's set
+	if q.rawShard != "" {
+		// Explicit shard routing
+		pool, err = q.getPoolForShard(q.rawShard)
+		if err != nil {
+			return fmt.Errorf("failed to get pool for shard '%s': %w", q.rawShard, err)
+		}
+	} else if q.joinContext != nil {
+		// Join-based routing: validate co-location
+		if len(q.joinContext.Tables) < 2 {
+			return fmt.Errorf("join requires at least 2 tables")
+		}
+		
+		// Check if tables are co-located
+		pool1, err1 := q.getPoolForTable(q.joinContext.Tables[0])
+		pool2, err2 := q.getPoolForTable(q.joinContext.Tables[1])
+		
+		if err1 != nil || err2 != nil {
+			return fmt.Errorf("failed to resolve pools for join tables: %v, %v", err1, err2)
+		}
+		
+		// Compare pool addresses to check co-location
+		if pool1 != pool2 {
+			return fmt.Errorf("tables '%s' and '%s' are not co-located (different shards/pools). Raw SQL joins only work for co-located tables", 
+				q.joinContext.Tables[0], q.joinContext.Tables[1])
+		}
+		
+		pool = pool1
+	} else if q.table != "" {
+		// Table-based routing (automatic)
+		pool, err = q.getPool()
+		if err != nil {
+			return fmt.Errorf("failed to get pool for table '%s': %w", q.table, err)
+		}
+	} else {
+		return fmt.Errorf("raw SQL requires either a table name, explicit shard, or join context for routing")
+	}
+
+	// Execute the raw query
+	rows, err := pool.Pool.Query(ctx, q.rawSQL, q.rawArgs...)
+	if err != nil {
+		return fmt.Errorf("raw query execution failed: %w", err)
+	}
+	defer rows.Close()
+
+	// Scan results
+	if dest != nil {
+		// scanRowsToDest handles both single struct and slice cases
+		return scanRowsToDest(rows, dest)
+	}
+
+	// If dest is nil, print results for demo purposes
+	results, err := scanRowsToMap(rows)
+	if err != nil {
+		return fmt.Errorf("failed to scan rows: %w", err)
+	}
+
+	fmt.Printf("\nRaw Query Results (%d rows):\n", len(results))
+	if len(results) > 0 {
+		// Print as table
+		headers := make([]string, 0, len(results[0]))
+		for k := range results[0] {
+			headers = append(headers, k)
+		}
+		sort.Strings(headers)
+
+		for _, h := range headers {
+			fmt.Printf("%-20s | ", h)
+		}
+		fmt.Println()
+		fmt.Println(strings.Repeat("-", len(headers)*23))
+
+		for _, row := range results {
+			for _, h := range headers {
+				val := fmt.Sprintf("%v", row[h])
+				if len(val) > 18 {
+					val = val[:15] + "..."
+				}
+				fmt.Printf("%-20s | ", val)
+			}
+			fmt.Println()
+		}
+	}
+
+	return nil
+}
+
+// getPoolForShard gets a pool for an explicit shard name
+func (q *Query) getPoolForShard(shardName string) (*driver.PGPool, error) {
+	info := registry.GetRegistryInfo()
+	mode := info["mode"].(string)
+	
+	if mode != "shard" {
+		return nil, fmt.Errorf("explicit shard routing requires shard mode, current mode: %s", mode)
+	}
+	
+	shards := info["shards"].(map[string]interface{})
+	shardInfoRaw, ok := shards[shardName]
+	if !ok {
+		return nil, fmt.Errorf("shard '%s' not found", shardName)
+	}
+	
+	shardInfo := shardInfoRaw.(map[string]interface{})
+	
+	// Try primary pool first
+	if pp, ok := shardInfo["primary_pool"]; ok && pp != nil {
+		return pp.(*driver.PGPool), nil
+	}
+	
+	// Try first standalone pool
+	if spRaw, ok := shardInfo["standalone_pools"]; ok && spRaw != nil {
+		if spMap, ok := spRaw.(map[string]*driver.PGPool); ok {
+			for _, pool := range spMap {
+				return pool, nil
+			}
+		}
+	}
+	
+	return nil, fmt.Errorf("no pool found for shard '%s'", shardName)
+}
+
+// getPoolForTable gets a pool for a specific table name
+func (q *Query) getPoolForTable(tableName string) (*driver.PGPool, error) {
+	// Temporarily set table and use existing getPool logic
+	originalTable := q.table
+	q.table = tableName
+	pool, err := q.getPool()
+	q.table = originalTable
+	return pool, err
 }
 
 // executeStandard executes a standard single-table query
