@@ -208,11 +208,11 @@ func setupScenario3_Sharding() {
 	fmt.Println("  ✓ Shard1 primary registered")
 
 	// Shard 2 standalone (for isolated tables)
-	err = norm.Register(dsn2).Shard("shard2").Standalone()
+	err = norm.Register(dsn2).Shard("shard2").Standalone("analytics")
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("  ✓ Shard2 standalone registered")
+	fmt.Println("  ✓ Shard2 standalone registered (analytics)")
 
 	// Shard 3 standalone
 	err = norm.Register(dsn3).Shard("shard3").Standalone()
@@ -324,7 +324,8 @@ func main() {
 	}
 
 	// Run each scenario
-	for i, scenario := range scenarios {
+	// MODIFIED: Run only Scenario 3 (Sharding) as requested
+	for i, scenario := range scenarios[2:3] {
 		fmt.Printf("\n\n🔄 Running scenario %d of %d...\n", i+1, len(scenarios))
 		runScenario(scenario)
 

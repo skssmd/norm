@@ -37,7 +37,7 @@ func RunQueryExamples() {
 		BulkInsert(bulkUsers).
 		Exec(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
 		fmt.Printf("  ✅ Bulk inserted %d user(s)\n", rowsAffected)
 	}
@@ -52,7 +52,7 @@ func RunQueryExamples() {
 		Username: "frankg",
 	}).Insert().Exec(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
 		fmt.Printf("  ✅ Inserted %d user(s)\n", rowsAffected)
 	}
@@ -69,8 +69,11 @@ func RunQueryExamples() {
 		Select("id", "fullname", "useremail").
 		Count(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
+		if count != 6 {
+			log.Panicf("  ❌ Expected 6 users, got %d\n", count)
+		}
 		fmt.Printf("  ✅ Found %d users\n", count)
 	}
 
@@ -80,8 +83,11 @@ func RunQueryExamples() {
 		Select().
 		Count(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
+		if count != 6 {
+			log.Panicf("  ❌ Expected 6 users, got %d\n", count)
+		}
 		fmt.Printf("  ✅ Total users: %d\n", count)
 	}
 
@@ -92,7 +98,7 @@ func RunQueryExamples() {
 		Where("uname = $1", "alicew").
 		Count(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
 		fmt.Printf("  ✅ Found %d user(s) with username 'alicew'\n", count)
 	}
@@ -104,7 +110,7 @@ func RunQueryExamples() {
 		Where("created_at > $1 AND uname LIKE $2", time.Now().AddDate(0, -1, 0), "%e%").
 		Count(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
 		fmt.Printf("  ✅ Found %d recent user(s) with 'e' in username\n", count)
 	}
@@ -116,7 +122,7 @@ func RunQueryExamples() {
 		OrderBy("fullname ASC").
 		Count(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
 		fmt.Printf("  ✅ Found %d users (ordered by name)\n", count)
 	}
@@ -129,7 +135,7 @@ func RunQueryExamples() {
 		Pagination(3, 0).
 		Count(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
 		fmt.Printf("  ✅ Page 1: %d users\n", count)
 	}
@@ -147,7 +153,7 @@ func RunQueryExamples() {
 		Where("uname = $1", "alicew").
 		Exec(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
 		fmt.Printf("  ✅ Updated %d user(s)\n", rowsAffected)
 	}
@@ -159,7 +165,7 @@ func RunQueryExamples() {
 		Where("uname = $1", "bobb").
 		Exec(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
 		fmt.Printf("  ✅ Updated %d user(s)\n", rowsAffected)
 	}
@@ -171,7 +177,7 @@ func RunQueryExamples() {
 		// Email is empty, will be ignored (keeps old value)
 	}).Update().Where("uname = $1", "charlied").Exec(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
 		fmt.Printf("  ✅ Updated %d user(s)\n", rowsAffected)
 	}
@@ -183,7 +189,7 @@ func RunQueryExamples() {
 		Where("created_at > $1 AND uname LIKE $2", time.Now().AddDate(0, -1, 0), "%e%").
 		Exec(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
 		fmt.Printf("  ✅ Updated %d user(s) matching criteria\n", rowsAffected)
 	}
@@ -201,7 +207,7 @@ func RunQueryExamples() {
 		Where("uname = $1", "evef").
 		Exec(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
 		fmt.Printf("  ✅ Deleted %d user(s)\n", rowsAffected)
 	}
@@ -213,7 +219,7 @@ func RunQueryExamples() {
 		Where("useremail LIKE $1 AND created_at < $2", "%@example.com", time.Now().Add(time.Hour)).
 		Exec(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
 		fmt.Printf("  ✅ Deleted %d user(s) matching criteria\n", rowsAffected)
 	}
@@ -230,7 +236,7 @@ func RunQueryExamples() {
 		Select().
 		Count(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
 		fmt.Printf("  ✅ Total remaining users: %d\n", count)
 	}
@@ -242,7 +248,7 @@ func RunQueryExamples() {
 		OrderBy("fullname ASC").
 		Count(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
 		fmt.Printf("  ✅ Listed %d user(s)\n", count)
 	}
@@ -254,7 +260,7 @@ func RunQueryExamples() {
 		Where("uname = $1", "alicew").
 		Count(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error: %v\n", err)
+		log.Panicf("  ❌ Error: %v\n", err)
 	} else {
 		if count > 0 {
 			fmt.Printf("  ✅ User 'alicew' still exists\n")
@@ -273,20 +279,42 @@ func RunQueryExamples() {
 	fmt.Println("\n1. Populating orders for join test...")
 	
 	// We need a user ID first. Let's assume ID 1 exists (Alice)
-	// In a real app we'd fetch it, but for this test we know Alice was inserted first
-	// and IDs are auto-incrementing (1, 2, 3...)
+	// But Step 4 deleted users, so we must re-populate first!
+	fmt.Println("   (Re-populating users for join test...)")
+	// Populate Users
+	bulkUsersForJoins := []User{
+		{Name: "Alice Williams", Email: "alice@example.com", Username: "alicew"},
+		{Name: "Bob Brown", Email: "bob@example.com", Username: "bobb"},
+	}
+	norm.Table("users").BulkInsert(bulkUsersForJoins).Exec(ctx)
+
+	// IDs are auto-incrementing. If previous users were 1-6, new ones might be 7-8.
+	// We need to fetch the actual IDs to use for orders.
+	var joinUsers []User
+	norm.Table("users").Select().Where("uname IN ($1, $2)", "alicew", "bobb").All(ctx, &joinUsers)
+	
+	aliceID := uint(1)
+	bobID := uint(2)
+	
+	for _, u := range joinUsers {
+		if u.Username == "alicew" {
+			aliceID = u.ID
+		} else if u.Username == "bobb" {
+			bobID = u.ID
+		}
+	}
 	
 	bulkOrders := []Order{
-		{UserID: 1, Total: 99.99, Status: "completed", Notes: "First order"},
-		{UserID: 1, Total: 149.50, Status: "pending", Notes: "Second order"},
-		{UserID: 2, Total: 29.99, Status: "shipped", Notes: "Bob's order"},
+		{UserID: aliceID, Total: 99.99, Status: "completed", Notes: "First order"},
+		{UserID: aliceID, Total: 149.50, Status: "pending", Notes: "Second order"},
+		{UserID: bobID, Total: 29.99, Status: "shipped", Notes: "Bob's order"},
 	}
 
 	rowsAffected, err = norm.Table("orders").
 		BulkInsert(bulkOrders).
 		Exec(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error inserting orders: %v\n", err)
+		log.Panicf("  ❌ Error inserting orders: %v\n", err)
 	} else {
 		fmt.Printf("  ✅ Inserted %d orders\n", rowsAffected)
 	}
@@ -306,7 +334,7 @@ func RunQueryExamples() {
 		if strings.Contains(err.Error(), "scanning not yet implemented") {
 			fmt.Println("  ✅ Join query executed successfully (scanning pending implementation)")
 		} else {
-			log.Printf("  ❌ Join query failed: %v\n", err)
+			log.Panicf("  ❌ Join query failed: %v\n", err)
 		}
 	} else {
 		fmt.Println("  ✅ Join query executed successfully")
@@ -320,7 +348,7 @@ func RunQueryExamples() {
 	}
 	_, err = norm.Table("profiles").BulkInsert(bulkProfiles).Exec(ctx)
 	if err != nil {
-		log.Printf("  ❌ Error inserting profiles: %v\n", err)
+		log.Panicf("  ❌ Error inserting profiles: %v\n", err)
 	} else {
 		fmt.Println("  ✅ Inserted profiles")
 	}
@@ -337,7 +365,7 @@ func RunQueryExamples() {
 		All(ctx, nil)
 	
 	if err != nil {
-		log.Printf("  ❌ Skey Join query failed: %v\n", err)
+		log.Panicf("  ❌ Skey Join query failed: %v\n", err)
 	} else {
 		fmt.Println("  ✅ Skey Join query executed successfully")
 	}
@@ -362,9 +390,168 @@ func RunQueryExamples() {
 		All(ctx, nil)
 
 	if err != nil {
-		log.Printf("  ❌ Distributed Join query failed: %v\n", err)
+		log.Panicf("  ❌ Distributed Join query failed: %v\n", err)
 	} else {
 		fmt.Println("  ✅ Distributed Join query executed successfully")
+	}
+
+	// ========================================
+	// STEP 7: STRUCT SCANNING
+	// ========================================
+	fmt.Println("\n\n📥 STEP 7: STRUCT SCANNING")
+	fmt.Println(strings.Repeat("-", 60))
+
+	// Re-populate data since previous steps deleted it (or Step 6 added some)
+	fmt.Println("Re-populating data for scanning tests...")
+	
+	// Clean up first to avoid Unique constraint violations from Step 6
+	norm.Table("users").Delete().Exec(ctx)
+	norm.Table("profiles").Delete().Exec(ctx)
+	norm.Table("orders").Delete().Exec(ctx)
+	
+	// Populate Users
+	bulkUsers = []User{
+		{Name: "Alice Williams", Email: "alice@example.com", Username: "alicew"},
+		{Name: "Bob Brown", Email: "bob@example.com", Username: "bobb"},
+	}
+	norm.Table("users").BulkInsert(bulkUsers).Exec(ctx)
+	
+	// Fetch users to get their actual IDs (auto-increment continues from previous inserts)
+	var currentUsers []User
+	norm.Table("users").Select().All(ctx, &currentUsers)
+	
+	// Reuse aliceID and bobID variables from STEP 6
+	aliceID = 0
+	bobID = 0
+	for _, u := range currentUsers {
+		if u.Username == "alicew" {
+			aliceID = u.ID
+		} else if u.Username == "bobb" {
+			bobID = u.ID
+		}
+	}
+	
+	// Populate Profiles with correct user IDs
+	if len(currentUsers) > 0 {
+		bulkProfiles = []Profile{}
+		for _, u := range currentUsers {
+			bulkProfiles = append(bulkProfiles, Profile{UserID: int(u.ID), Bio: u.Name + "'s Bio"})
+		}
+		norm.Table("profiles").BulkInsert(bulkProfiles).Exec(ctx)
+	}
+	
+	// Populate Orders with correct user IDs
+	bulkOrders = []Order{
+		{UserID: aliceID, Total: 99.99, Status: "completed", Notes: "First order"},
+		{UserID: aliceID, Total: 149.50, Status: "pending", Notes: "Second order"},
+		{UserID: bobID, Total: 29.99, Status: "shipped", Notes: "Bob's order"},
+	}
+	norm.Table("orders").BulkInsert(bulkOrders).Exec(ctx)
+	fmt.Printf("  ✅ Populated %d users, %d profiles, %d orders\n", len(currentUsers), len(bulkProfiles), len(bulkOrders))
+
+	// 1. Scan single struct
+	fmt.Println("\n1. Scanning single user into struct via First()...")
+	var u User
+	err = norm.Table("users").Select().Where("uname = $1", "alicew").First(ctx, &u)
+	if err != nil {
+		log.Panicf("  ❌ Error: %v\n", err)
+	} else {
+		fmt.Printf("  ✅ Scanned User: %s (%s)\n", u.Name, u.Email)
+	}
+
+	// 2. Scan slice of structs (limit 1 to avoid huge output)
+	fmt.Println("\n2. Scanning multiple users into slice via All()...")
+	var users []User
+	err = norm.Table("users").Select().Limit(1).All(ctx, &users)
+	if err != nil {
+		log.Panicf("  ❌ Error: %v\n", err)
+	} else {
+		fmt.Printf("  ✅ Scanned %d users\n", len(users))
+		for _, user := range users {
+			fmt.Printf("     - %s\n", user.Name)
+		}
+	}
+
+	// 3. Scan App-Side Join Results (User struct + Map?)
+	// Currently scanning only supports scanning into keys matching struct fields.
+	// If we join users + profiles, and select users.fullname, profiles.bio
+	// And scan into struct with Fullname and Bio fields
+	
+	type UserProfile struct {
+		Fullname string
+		Bio      string
+	}
+	
+	fmt.Println("\n3. Scanning Skey Join result into custom struct...")
+	var userProfiles []UserProfile
+	err = norm.Table("users", "id", "profiles", "user_id").
+		Select("users.fullname", "profiles.bio").
+		Where("users.uname = $1", "alicew").
+		All(ctx, &userProfiles)
+		
+	if err != nil {
+		log.Panicf("  ❌ Error: %v\n", err)
+	} else {
+		fmt.Printf("  ✅ Scanned %d joined rows\n", len(userProfiles))
+		for _, up := range userProfiles {
+			fmt.Printf("     - %s: %s\n", up.Fullname, up.Bio)
+		}
+	}
+
+	// 4. Scan using Tags and Aliases (for robust mapping)
+	fmt.Println("\n4. Scanning with explicit tags and aliasing (User + Profile)...")
+	
+	type UserAndProfile struct {
+		UserName string `norm:"name:fullname"`   // Match column "fullname" or "users.fullname"
+		UserBio  string `norm:"name:bio"`        // Match column "bio" or "profiles.bio"
+		UID      int    `norm:"name:user_id_alias"` // Verify aliasing support
+	}
+	
+	var userAndProfiles []UserAndProfile
+	
+	// Use manual select with aliasing for the ID to avoid ambiguity/conflict if needed
+	// and to prove we can map to arbitrary struct fields
+	err = norm.Table("users", "id", "profiles", "user_id").
+		Select("users.fullname", "profiles.bio", "users.id as user_id_alias").
+		Where("users.uname = $1", "alicew").
+		All(ctx, &userAndProfiles)
+		
+	if err != nil {
+		log.Panicf("  ❌ Error: %v\n", err)
+	} else {
+		if len(userAndProfiles) == 0 {
+			log.Panicf("  ❌ Expected > 0 results for User+Profile scan, got 0\n")
+		}
+		fmt.Printf("  ✅ Scanned %d rows into UserAndProfile\n", len(userAndProfiles))
+		for _, item := range userAndProfiles {
+			fmt.Printf("     - Name: %s, Bio: %s, ID: %d\n", item.UserName, item.UserBio, item.UID)
+		}
+	}
+
+	// 5. Scan User + Orders (Native/Standard Join)
+	fmt.Println("\n5. Scanning User + Orders (Native/Standard Join)...")
+	type UserOrder struct {
+		UserName   string  `norm:"name:fullname"`
+		OrderTotal float64 `norm:"name:total"`
+	}
+	var userOrders []UserOrder
+	
+	// Alice has 2 orders
+	err = norm.Table("users", "id", "orders", "user_id").
+		Select("users.fullname", "orders.total").
+		Where("users.uname = $1", "alicew").
+		All(ctx, &userOrders)
+
+	if err != nil {
+		log.Panicf("  ❌ Error: %v\n", err)
+	} else {
+		if len(userOrders) != 2 {
+			log.Panicf("  ❌ Expected 2 orders for Alice, got %d\n", len(userOrders))
+		}
+		fmt.Printf("  ✅ Scanned %d rows into UserOrder\n", len(userOrders))
+		for _, item := range userOrders {
+			fmt.Printf("     - Name: %s, Total: %.2f\n", item.UserName, item.OrderTotal)
+		}
 	}
 
 	fmt.Println("\n" + strings.Repeat("=", 60))

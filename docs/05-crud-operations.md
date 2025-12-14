@@ -6,6 +6,8 @@ Complete guide to Create, Read, Update, and Delete operations in Norm ORM.
 - [Overview](#overview)
 - [INSERT Operations](#insert-operations)
 - [SELECT Operations](#select-operations)
+- [JOIN Operations](#join-operations)
+- [Struct Scanning](#struct-scanning)
 - [UPDATE Operations](#update-operations)
 - [DELETE Operations](#delete-operations)
 - [Bulk Operations](#bulk-operations)
@@ -111,6 +113,372 @@ count, err := norm.Table("users").
 SELECT id, name, email FROM users 
 ORDER BY created_at DESC 
 LIMIT 10 OFFSET 0
+```
+
+---
+
+## JOIN Operations
+
+Norm supports multiple types of joins with automatic routing based on your database architecture:
+
+### Join Types
+
+1. **Native Join** - Standard SQL JOIN when tables are on the same database
+2. **App-Side Join (Skey)** - Application-level join for soft-key relationships
+3. **Distributed Join** - Cross-database join for sharded architectures
+
+### 1. Basic JOIN Syntax
+
+```go
+// JOIN users and orders tables
+// Syntax: Table(leftTable, leftKey, rightTable, rightKey)
+err := norm.Table("users", "id", "orders", "user_id").
+    Select("users.fullname", "orders.total").
+    Where("users.username = $1", "alice").
+    All(ctx, &results)
+```
+
+**Generated SQL (Native Join):**
+```sql
+SELECT users.fullname, orders.total 
+FROM users 
+INNER JOIN orders ON users.id = orders.user_id 
+WHERE users.username = $1
+```
+
+### 2. Native JOIN (Same Database)
+
+When both tables are on the same database/shard, Norm uses standard SQL JOIN:
+
+```go
+type UserOrder struct {
+    UserName   string  `norm:"name:fullname"`
+    OrderTotal float64 `norm:"name:total"`
+}
+
+var userOrders []UserOrder
+
+err := norm.Table("users", "id", "orders", "user_id").
+    Select("users.fullname", "orders.total").
+    Where("users.username = $1", "alice").
+    All(ctx, &userOrders)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, item := range userOrders {
+    fmt.Printf("User: %s, Total: %.2f\n", item.UserName, item.OrderTotal)
+}
+```
+
+### 3. App-Side JOIN (Skey Relationships)
+
+When using soft keys (`skey` tag), Norm performs an application-level join:
+
+```go
+// Profile struct with skey
+type Profile struct {
+    ID     int    `norm:"pk;auto"`
+    UserID int    `norm:"skey:users.id"`  // Soft key - app-level join
+    Bio    string
+}
+
+type UserProfile struct {
+    Fullname string
+    Bio      string
+}
+
+var userProfiles []UserProfile
+
+// Automatically uses App-Side Join due to skey
+err := norm.Table("users", "id", "profiles", "user_id").
+    Select("users.fullname", "profiles.bio").
+    Where("users.username = $1", "alice").
+    All(ctx, &userProfiles)
+```
+
+**How it works:**
+1. Fetches users matching the WHERE clause
+2. Extracts user IDs
+3. Fetches profiles with matching user_ids
+4. Combines results in application memory
+
+### 4. Distributed JOIN (Cross-Shard)
+
+When tables are on different shards, Norm automatically performs a distributed join:
+
+```go
+// Users on shard1, Analytics on shard2
+type UserAnalytics struct {
+    UserName  string `norm:"name:fullname"`
+    EventType string `norm:"name:event_type"`
+}
+
+var userAnalytics []UserAnalytics
+
+err := norm.Table("users", "id", "analytics", "user_id").
+    Select("users.fullname", "analytics.event_type").
+    Where("users.username = $1", "alice").
+    All(ctx, &userAnalytics)
+```
+
+**How it works:**
+1. Queries left table (users) on its shard
+2. Extracts join keys
+3. Queries right table (analytics) on its shard with IN clause
+4. Combines results in application memory
+
+### 5. JOIN with Multiple Conditions
+
+```go
+err := norm.Table("users", "id", "orders", "user_id").
+    Select("users.fullname", "orders.total", "orders.status").
+    Where("users.status = $1 AND orders.created_at > $2", "active", time.Now().AddDate(0, -1, 0)).
+    OrderBy("orders.created_at DESC").
+    All(ctx, &results)
+```
+
+### 6. JOIN with Aliasing
+
+Use aliases to avoid column name conflicts:
+
+```go
+type UserOrderDetail struct {
+    UserID    int     `norm:"name:user_id_alias"`
+    UserName  string  `norm:"name:fullname"`
+    OrderID   int     `norm:"name:order_id_alias"`
+    Total     float64 `norm:"name:total"`
+}
+
+var details []UserOrderDetail
+
+err := norm.Table("users", "id", "orders", "user_id").
+    Select(
+        "users.id as user_id_alias",
+        "users.fullname",
+        "orders.id as order_id_alias",
+        "orders.total",
+    ).
+    All(ctx, &details)
+```
+
+---
+
+## Struct Scanning
+
+Norm provides powerful struct scanning capabilities to map query results directly to Go structs.
+
+### 1. Scan Single Row with First()
+
+```go
+type User struct {
+    ID       uint   `norm:"index;notnull;pk;auto"`
+    Name     string `norm:"name:fullname;notnull"`
+    Email    string `norm:"name:useremail;unique;notnull"`
+    Username string `norm:"name:uname;notnull;unique"`
+}
+
+var user User
+
+err := norm.Table("users").
+    Select().
+    Where("username = $1", "alice").
+    First(ctx, &user)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Printf("User: %s (%s)\n", user.Name, user.Email)
+```
+
+### 2. Scan Multiple Rows with All()
+
+```go
+var users []User
+
+err := norm.Table("users").
+    Select().
+    Where("created_at > $1", time.Now().AddDate(0, -1, 0)).
+    OrderBy("created_at DESC").
+    Limit(10).
+    All(ctx, &users)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, u := range users {
+    fmt.Printf("- %s\n", u.Name)
+}
+```
+
+### 3. Scan JOIN Results into Custom Struct
+
+```go
+type UserProfile struct {
+    Fullname string
+    Bio      string
+}
+
+var userProfiles []UserProfile
+
+err := norm.Table("users", "id", "profiles", "user_id").
+    Select("users.fullname", "profiles.bio").
+    Where("users.username = $1", "alice").
+    All(ctx, &userProfiles)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, up := range userProfiles {
+    fmt.Printf("%s: %s\n", up.Fullname, up.Bio)
+}
+```
+
+### 4. Scan with Field Mapping Tags
+
+Use `norm:"name:column_name"` tags to map struct fields to specific columns:
+
+```go
+type UserAndProfile struct {
+    UserName string `norm:"name:fullname"`        // Maps to "fullname" column
+    UserBio  string `norm:"name:bio"`             // Maps to "bio" column
+    UID      int    `norm:"name:user_id_alias"`   // Maps to aliased column
+}
+
+var userAndProfiles []UserAndProfile
+
+err := norm.Table("users", "id", "profiles", "user_id").
+    Select("users.fullname", "profiles.bio", "users.id as user_id_alias").
+    Where("users.username = $1", "alice").
+    All(ctx, &userAndProfiles)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, item := range userAndProfiles {
+    fmt.Printf("Name: %s, Bio: %s, ID: %d\n", item.UserName, item.UserBio, item.UID)
+}
+```
+
+### 5. Scan with Table-Prefixed Columns
+
+Norm automatically handles table-prefixed column names:
+
+```go
+type OrderWithUser struct {
+    UserName   string  `norm:"name:fullname"`     // Matches "users.fullname"
+    OrderTotal float64 `norm:"name:total"`        // Matches "orders.total"
+    Status     string  `norm:"name:status"`       // Matches "orders.status"
+}
+
+var orders []OrderWithUser
+
+err := norm.Table("users", "id", "orders", "user_id").
+    Select("users.fullname", "orders.total", "orders.status").
+    Where("users.username = $1", "alice").
+    All(ctx, &orders)
+```
+
+### 6. Field Mapping Priority
+
+Norm maps columns to struct fields in this order:
+
+1. **Exact match with `norm:"name:column_name"` tag**
+2. **Table-prefixed match** (e.g., `users.fullname` → field with `name:fullname`)
+3. **Case-insensitive field name match**
+
+```go
+type Example struct {
+    // Priority 1: Explicit tag mapping
+    UserEmail string `norm:"name:useremail"`  // Maps to "useremail" or "users.useremail"
+    
+    // Priority 2: Table-prefixed
+    // If column is "users.fullname", matches field with name:fullname tag
+    
+    // Priority 3: Case-insensitive name
+    CreatedAt time.Time  // Maps to "created_at" or "createdat"
+}
+```
+
+### 7. Scanning Partial Results
+
+You don't need to include all columns in your struct:
+
+```go
+type UserSummary struct {
+    Name  string `norm:"name:fullname"`
+    Email string `norm:"name:useremail"`
+    // Other User fields are ignored
+}
+
+var summaries []UserSummary
+
+err := norm.Table("users").
+    Select("fullname", "useremail").  // Only select what you need
+    All(ctx, &summaries)
+```
+
+### 8. Scanning with Count
+
+Get both count and results:
+
+```go
+var users []User
+
+// Get count
+count, err := norm.Table("users").
+    Select().
+    Where("status = $1", "active").
+    Count(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+// Get actual results
+err = norm.Table("users").
+    Select().
+    Where("status = $1", "active").
+    All(ctx, &users)
+
+fmt.Printf("Found %d active users\n", count)
+```
+
+### Complete Scanning Example
+
+```go
+func GetUserOrders(username string) ([]UserOrder, error) {
+    type UserOrder struct {
+        UserName   string    `norm:"name:fullname"`
+        UserEmail  string    `norm:"name:useremail"`
+        OrderID    uint      `norm:"name:order_id"`
+        OrderTotal float64   `norm:"name:total"`
+        Status     string    `norm:"name:status"`
+        OrderDate  time.Time `norm:"name:created_at"`
+    }
+    
+    var orders []UserOrder
+    
+    err := norm.Table("users", "id", "orders", "user_id").
+        Select(
+            "users.fullname",
+            "users.useremail",
+            "orders.id as order_id",
+            "orders.total",
+            "orders.status",
+            "orders.created_at",
+        ).
+        Where("users.username = $1", username).
+        OrderBy("orders.created_at DESC").
+        All(context.Background(), &orders)
+    
+    return orders, err
+}
 ```
 
 ---
@@ -523,6 +891,18 @@ _, err := norm.Table("users").
 - **With WHERE**: `Select().Where("status = $1", "active").Count()`
 - **Pagination**: `Select().OrderBy("id").Pagination(10, 0).Count()`
 
+### JOIN
+- **Basic JOIN**: `Table("users", "id", "orders", "user_id").Select(...).All(ctx, &results)`
+- **Native JOIN**: Same database - uses SQL INNER JOIN
+- **App-Side JOIN**: Skey relationships - application-level join
+- **Distributed JOIN**: Cross-shard - automatic distributed query
+
+### SCANNING
+- **Single row**: `Select().Where(...).First(ctx, &user)`
+- **Multiple rows**: `Select().All(ctx, &users)`
+- **JOIN results**: `Table("users", "id", "orders", "user_id").Select(...).All(ctx, &results)`
+- **Field mapping**: Use `norm:"name:column_name"` tags for custom mapping
+
 ### UPDATE
 - **Pair-based**: `Update("name", "John").Where("id = $1", 123).Exec()`
 - **Struct-based**: `Table(user).Update().Where("id = $1", 123).Exec()`
@@ -531,7 +911,7 @@ _, err := norm.Table("users").
 - **With condition**: `Delete().Where("id = $1", 123).Exec()`
 
 ### Context
-- **With context**: `.Exec(ctx)` or `.Count(ctx)`
+- **With context**: `.Exec(ctx)` or `.Count(ctx)` or `.All(ctx, &dest)` or `.First(ctx, &dest)`
 - **Without context**: `.Exec()` or `.Count()` - Uses `context.Background()`
 
 Happy coding! 🚀

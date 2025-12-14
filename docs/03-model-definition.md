@@ -37,9 +37,9 @@ type ModelName struct {
 
 ```go
 type User struct {
-    ID        uint      `norm:"index;notnull;pk"`
-    Email     string    `norm:"unique;notnull"`
-    Name      string    `norm:"notnull"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
+    Email     string    `norm:"name:useremail;unique;notnull"`
+    Name      string    `norm:"name:fullname;notnull"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
 ```
@@ -118,8 +118,8 @@ Database-enforced foreign key constraints.
 
 ```go
 type Order struct {
-    ID     uint `norm:"index;notnull;pk"`
-    UserID uint `norm:"fkey:users.id;ondelete:cascade;notnull"`
+    ID     uint `norm:"index;notnull;pk;auto"`
+    UserID uint `norm:"index;notnull;fkey:users.id;ondelete:cascade"`
 }
 ```
 
@@ -145,7 +145,7 @@ Application-level logical relationships without DB constraints.
 
 ```go
 type Analytics struct {
-    ID     uint  `norm:"index;notnull;pk"`
+    ID     uint  `norm:"index;notnull;pk;auto"`
     UserID *uint `norm:"skey:users.id;ondelete:setnull"`
 }
 ```
@@ -266,16 +266,16 @@ import "time"
 // User represents a user account
 type User struct {
     // Primary key - auto-increment ID
-    ID uint `norm:"index;notnull;pk"`
+    ID uint `norm:"index;notnull;pk;auto"`
     
     // Unique email for login
-    Email string `norm:"unique;notnull"`
+    Email string `norm:"name:useremail;unique;notnull"`
     
     // User's full name
-    Name string `norm:"notnull"`
+    Name string `norm:"name:fullname;notnull"`
     
-    // Username for display (optional)
-    Username *string `norm:"unique"` // nullable
+    // Username for display
+    Username string `norm:"name:uname;unique;notnull"`
     
     // Hashed password
     PasswordHash string `norm:"notnull"`
@@ -335,11 +335,11 @@ type Product struct {
 
 // Order represents a customer order
 type Order struct {
-    ID         uint      `norm:"index;notnull;pk"`
+    ID         uint      `norm:"index;notnull;pk;auto"`
     OrderNumber string   `norm:"unique;notnull;max:50"`
     
     // Hard foreign key - order must have valid user
-    UserID     uint      `norm:"fkey:users.id;ondelete:restrict;notnull"`
+    UserID     uint      `norm:"index;notnull;fkey:users.id;ondelete:restrict"`
     
     Total      float64   `norm:"notnull"`
     Status     string    `norm:"max:20;default:'pending'"`
@@ -377,9 +377,9 @@ import "time"
 
 // User - blog author
 type User struct {
-    ID        uint      `norm:"index;notnull;pk"`
-    Username  string    `norm:"unique;notnull;max:50"`
-    Email     string    `norm:"unique;notnull"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
+    Username  string    `norm:"name:uname;unique;notnull;max:50"`
+    Email     string    `norm:"name:useremail;unique;notnull"`
     Bio       *string   `norm:"text"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
@@ -455,9 +455,9 @@ import "time"
 
 // User - main user table
 type User struct {
-    ID        uint      `norm:"index;notnull;pk"`
-    Email     string    `norm:"unique;notnull"`
-    Name      string    `norm:"notnull"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
+    Email     string    `norm:"name:useremail;unique;notnull"`
+    Name      string    `norm:"name:fullname;notnull"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
 
@@ -538,13 +538,13 @@ type Tenant struct {
 
 // User - tenant user
 type User struct {
-    ID        uint      `norm:"index;notnull;pk"`
+    ID        uint      `norm:"index;notnull;pk;auto"`
     
     // Hard foreign key - user belongs to tenant
-    TenantID  uint      `norm:"index;fkey:tenants.id;ondelete:cascade;notnull"`
+    TenantID  uint      `norm:"index;notnull;fkey:tenants.id;ondelete:cascade"`
     
-    Email     string    `norm:"notnull"` // Unique per tenant
-    Name      string    `norm:"notnull"`
+    Email     string    `norm:"name:useremail;notnull"` // Unique per tenant
+    Name      string    `norm:"name:fullname;notnull"`
     Role      string    `norm:"max:50;default:'member'"`
     CreatedAt time.Time `norm:"notnull;default:NOW()"`
 }
@@ -593,13 +593,13 @@ type Task struct {
 ```go
 // ✅ Good
 type User struct {
-    ID uint `norm:"index;notnull;pk"`
+    ID uint `norm:"index;notnull;pk;auto"`
     // ...
 }
 
 // ❌ Bad - no primary key
 type User struct {
-    Email string `norm:"unique;notnull"`
+    Email string `norm:"name:useremail;unique;notnull"`
     // ...
 }
 ```
@@ -609,8 +609,8 @@ type User struct {
 ```go
 // ✅ Good - specific lengths
 type User struct {
-    Email    string `norm:"unique;notnull"`        // VARCHAR(255)
-    Username string `norm:"unique;notnull;max:50"` // VARCHAR(50)
+    Email    string `norm:"name:useremail;unique;notnull"`        // VARCHAR(255)
+    Username string `norm:"name:uname;unique;notnull;max:50"` // VARCHAR(50)
     Bio      string `norm:"text"`                  // TEXT
 }
 
@@ -627,7 +627,7 @@ type User struct {
 ```go
 // ✅ Good - explicit nullability
 type User struct {
-    Name      string     `norm:"notnull"`
+    Name      string     `norm:"name:fullname;notnull"`
     Bio       *string    `norm:"text"`      // nullable
     Age       *uint      `norm:""`          // nullable
     UpdatedAt *time.Time `norm:"default:NOW()"` // nullable
@@ -659,7 +659,7 @@ type Order struct {
 ```go
 // ✅ Good - track creation and updates
 type Model struct {
-    ID        uint       `norm:"index;notnull;pk"`
+    ID        uint       `norm:"index;notnull;pk;auto"`
     CreatedAt time.Time  `norm:"notnull;default:NOW()"`
     UpdatedAt *time.Time `norm:"default:NOW()"`
 }

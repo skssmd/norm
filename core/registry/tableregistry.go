@@ -43,6 +43,8 @@ type Field struct{
 	OnDelete string
 	Fieldtype string
 	Max string
+	NotNull bool
+	Default string
 }
 // Table registers a table with the ORM for migrations and routing
 // Usage:
@@ -101,10 +103,10 @@ func registerTable(model interface{}, tableName string) TableModel {
 
 		normTag := sf.Tag.Get("norm")
 		tags := utils.ParseNormTags(normTag)
-f := Field{
-    Fieldname: utils.ResolveColumnName(sf),
-    Fieldtype: utils.GetPostgresType(sf),
-}
+		f := Field{
+			Fieldname: utils.ResolveColumnName(sf),
+			Fieldtype: utils.GetPostgresType(sf),
+		}
 
 		if _, ok := tags["index"]; ok {
 			f.Indexed = true
@@ -119,6 +121,12 @@ f := Field{
 	
 		if _, ok := tags["unique"]; ok {
 			f.Unique = true
+		}
+		if _, ok := tags["notnull"]; ok {
+			f.NotNull = true
+		}
+		if defVal, ok := tags["default"]; ok {
+			f.Default = defVal.(string)
 		}
 		if maxLen, ok := tags["max"]; ok {
 			f.Max = maxLen.(string)

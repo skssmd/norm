@@ -18,7 +18,7 @@ Table registration tells Norm:
 2. Which database pool(s) to use for each table
 3. What role each table has (primary, read, write, standalone)
 
-Tables are registered using `norm.Table(model)` which returns a builder for configuration.
+Tables are registered using `norm.RegisterTable(model, "tablename")` which returns a builder for configuration.
 
 ---
 
@@ -26,12 +26,12 @@ Tables are registered using `norm.Table(model)` which returns a builder for conf
 
 ### Global Mode (Automatic)
 
-In global mode, tables are **automatically registered as global** when you call `norm.Table()`:
+In global mode, tables are **automatically registered as global** when you call `norm.RegisterTable()`:
 
 ```go
 // No need to call .Global() - it's automatic!
-norm.Table(User{})
-norm.Table(Order{})
+norm.RegisterTable(User{}, "users")
+norm.RegisterTable(Order{}, "orders")
 ```
 
 ### Shard Mode (Explicit)
@@ -40,8 +40,8 @@ In shard mode, you **must explicitly assign** tables to shards:
 
 ```go
 // Must specify shard and role
-norm.Table(User{}).Shard("shard1").Primary()
-norm.Table(Order{}).Shard("shard1").Primary()
+norm.RegisterTable(User{}, "users").Primary("shard1")
+norm.RegisterTable(Order{}, "orders").Primary("shard1")
 ```
 
 ---
@@ -52,16 +52,16 @@ norm.Table(Order{}).Shard("shard1").Primary()
 
 | Method | Description | When to Use |
 |--------|-------------|-------------|
-| `Table(model)` | Auto-registers as global | Global mode only |
+| `RegisterTable(model, "name")` | Auto-registers as global | Global mode only |
 
 ### Shard Mode Methods
 
 | Method | Description | When to Use |
 |--------|-------------|-------------|
-| `Table(model).Shard(name).Primary()` | Assign to primary shard | Transactional tables |
-| `Table(model).Shard(name).Standalone()` | Assign to standalone shard | Isolated tables |
-| `Table(model).Shard(name).Read()` | Assign read role | Read-only tables |
-| `Table(model).Shard(name).Write()` | Assign write role | Write-heavy tables |
+| `RegisterTable(model, "name").Primary("shard")` | Assign to primary shard | Transactional tables |
+| `RegisterTable(model, "name").Standalone("shard")` | Assign to standalone shard | Isolated tables |
+| `RegisterTable(model, "name").Read("shard")` | Assign read role | Read-only tables |
+| `RegisterTable(model, "name").Write("shard")` | Assign write role | Write-heavy tables |
 
 ---
 
@@ -99,8 +99,8 @@ func main() {
     norm.Register(dsn).Primary()
     
     // Register tables - automatically global
-    norm.Table(User{})
-    norm.Table(Order{})
+    norm.RegisterTable(User{}, "users")
+    norm.RegisterTable(Order{}, "orders")
     
     // Run migrations
     norm.Norm()
@@ -163,23 +163,23 @@ func main() {
     norm.Register(dsn2).Shard("analytics").Standalone()
     
     // Register transactional tables to shard1
-    err := norm.Table(User{}).Shard("transactional").Primary()
+    err := norm.RegisterTable(User{}, "users").Primary("transactional")
     if err != nil {
         log.Fatal("Failed to register User:", err)
     }
     
-    err = norm.Table(Order{}).Shard("transactional").Primary()
+    err = norm.RegisterTable(Order{}, "orders").Primary("transactional")
     if err != nil {
         log.Fatal("Failed to register Order:", err)
     }
     
     // Register analytics tables to shard2
-    err = norm.Table(Analytics{}).Shard("analytics").Standalone()
+    err = norm.RegisterTable(Analytics{}, "analytics").Standalone("analytics")
     if err != nil {
         log.Fatal("Failed to register Analytics:", err)
     }
     
-    err = norm.Table(Log{}).Shard("analytics").Standalone()
+    err = norm.RegisterTable(Log{}, "logs").Standalone("analytics")
     if err != nil {
         log.Fatal("Failed to register Log:", err)
     }
@@ -249,12 +249,12 @@ func main() {
     // Register tables to all shards
     // (In practice, you'd route to the correct shard based on tenant)
     for shardName := range tenantShards {
-        err := norm.Table(User{}).Shard(shardName).Primary()
+        err := norm.RegisterTable(User{}, "users").Primary(shardName)
         if err != nil {
             log.Fatal(err)
         }
         
-        err = norm.Table(Order{}).Shard(shardName).Primary()
+        err = norm.RegisterTable(Order{}, "orders").Primary(shardName)
         if err != nil {
             log.Fatal(err)
         }
@@ -321,19 +321,19 @@ func main() {
     
     // Assign tables based on access patterns
     // User: balanced access → primary pool
-    err := norm.Table(User{}).Shard("main").Primary()
+    err := norm.RegisterTable(User{}, "users").Primary("main")
     if err != nil {
         log.Fatal(err)
     }
     
     // Order: write-heavy → write role
-    err = norm.Table(Order{}).Shard("main").Write()
+    err = norm.RegisterTable(Order{}, "orders").Write("main")
     if err != nil {
         log.Fatal(err)
     }
     
     // Analytics: read-heavy → read role
-    err = norm.Table(Analytics{}).Shard("main").Read()
+    err = norm.RegisterTable(Analytics{}, "analytics").Read("main")
     if err != nil {
         log.Fatal(err)
     }
@@ -415,15 +415,18 @@ func main() {
         }
         
         // Register based on role
+        // Note: You'd need to get table name from config or model
+        tableName := strings.ToLower(tableConfig.Model) + "s" // Simple pluralization
+        
         switch tableConfig.Role {
         case "primary":
-            err = norm.Table(model).Shard(tableConfig.Shard).Primary()
+            err = norm.RegisterTable(model, tableName).Primary(tableConfig.Shard)
         case "standalone":
-            err = norm.Table(model).Shard(tableConfig.Shard).Standalone()
+            err = norm.RegisterTable(model, tableName).Standalone(tableConfig.Shard)
         case "read":
-            err = norm.Table(model).Shard(tableConfig.Shard).Read()
+            err = norm.RegisterTable(model, tableName).Read(tableConfig.Shard)
         case "write":
-            err = norm.Table(model).Shard(tableConfig.Shard).Write()
+            err = norm.RegisterTable(model, tableName).Write(tableConfig.Shard)
         default:
             log.Printf("Warning: Unknown role %s", tableConfig.Role)
             continue
@@ -491,10 +494,10 @@ func main() {
 
 ```go
 // ❌ Bad - ignoring errors
-norm.Table(User{}).Shard("shard1").Primary()
+norm.RegisterTable(User{}, "users").Primary("shard1")
 
 // ✅ Good - handling errors
-err := norm.Table(User{}).Shard("shard1").Primary()
+err := norm.RegisterTable(User{}, "users").Primary("shard1")
 if err != nil {
     log.Fatal("Failed to register User:", err)
 }
@@ -504,25 +507,25 @@ if err != nil {
 
 ```go
 // ✅ Good - consistent shard names
-norm.Table(User{}).Shard("transactional").Primary()
-norm.Table(Order{}).Shard("transactional").Primary()
+norm.RegisterTable(User{}, "users").Primary("transactional")
+norm.RegisterTable(Order{}, "orders").Primary("transactional")
 
 // ❌ Bad - inconsistent names
-norm.Table(User{}).Shard("transactional").Primary()
-norm.Table(Order{}).Shard("trans").Primary() // Typo!
+norm.RegisterTable(User{}, "users").Primary("transactional")
+norm.RegisterTable(Order{}, "orders").Primary("trans") // Typo!
 ```
 
 ### 3. Group Related Tables
 
 ```go
 // ✅ Good - related tables in same shard
-norm.Table(User{}).Shard("users").Primary()
-norm.Table(UserProfile{}).Shard("users").Primary()
-norm.Table(UserSettings{}).Shard("users").Primary()
+norm.RegisterTable(User{}, "users").Primary("users")
+norm.RegisterTable(UserProfile{}, "user_profiles").Primary("users")
+norm.RegisterTable(UserSettings{}, "user_settings").Primary("users")
 
 // Analytics in separate shard
-norm.Table(Analytics{}).Shard("analytics").Standalone()
-norm.Table(Log{}).Shard("analytics").Standalone()
+norm.RegisterTable(Analytics{}, "analytics").Standalone("analytics")
+norm.RegisterTable(Log{}, "logs").Standalone("analytics")
 ```
 
 ### 4. Document Table Placement
@@ -530,11 +533,11 @@ norm.Table(Log{}).Shard("analytics").Standalone()
 ```go
 // Document why tables are placed in specific shards
 // User and Order: High transaction volume, need ACID guarantees
-err := norm.Table(User{}).Shard("transactional").Primary()
-err = norm.Table(Order{}).Shard("transactional").Primary()
+err := norm.RegisterTable(User{}, "users").Primary("transactional")
+err = norm.RegisterTable(Order{}, "orders").Primary("transactional")
 
 // Analytics: Heavy reads, eventual consistency OK
-err = norm.Table(Analytics{}).Shard("analytics").Standalone()
+err = norm.RegisterTable(Analytics{}, "analytics").Standalone("analytics")
 ```
 
 ### 5. Validation
@@ -550,11 +553,14 @@ func registerTable(model interface{}, shard string, role string) error {
     }
     
     // Register based on role
+    // Note: You'd need table name as parameter
+    tableName := "table_name" // Should be passed as parameter
+    
     switch role {
     case "primary":
-        return norm.Table(model).Shard(shard).Primary()
+        return norm.RegisterTable(model, tableName).Primary(shard)
     case "standalone":
-        return norm.Table(model).Shard(shard).Standalone()
+        return norm.RegisterTable(model, tableName).Standalone(shard)
     default:
         return fmt.Errorf("unknown role: %s", role)
     }
@@ -567,10 +573,10 @@ func registerTable(model interface{}, shard string, role string) error {
 
 | Mode | Registration | Use Case |
 |------|-------------|----------|
-| **Global** | `norm.Table(model)` | Single database |
-| **Shard Primary** | `norm.Table(model).Shard(name).Primary()` | Transactional data |
-| **Shard Standalone** | `norm.Table(model).Shard(name).Standalone()` | Isolated data |
-| **Shard Read** | `norm.Table(model).Shard(name).Read()` | Read-heavy tables |
-| **Shard Write** | `norm.Table(model).Shard(name).Write()` | Write-heavy tables |
+| **Global** | `norm.RegisterTable(model, "name")` | Single database |
+| **Shard Primary** | `norm.RegisterTable(model, "name").Primary("shard")` | Transactional data |
+| **Shard Standalone** | `norm.RegisterTable(model, "name").Standalone("shard")` | Isolated data |
+| **Shard Read** | `norm.RegisterTable(model, "name").Read("shard")` | Read-heavy tables |
+| **Shard Write** | `norm.RegisterTable(model, "name").Write("shard")` | Write-heavy tables |
 
 Choose the registration method that matches your database architecture and access patterns.

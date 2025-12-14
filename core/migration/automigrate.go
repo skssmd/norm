@@ -73,6 +73,19 @@ func (am *AutoMigrator) DropAllTables() error {
 					}(shardName, primaryPool)
 				}
 			}
+
+			// Drop from standalone pools if they exist
+			if standalonePools, ok := shardData["standalone_pools"].(map[string]*driver.PGPool); ok && len(standalonePools) > 0 {
+				for poolKey, standalonePool := range standalonePools {
+					wg.Add(1)
+					go func(shard string, poolK string, p *driver.PGPool) {
+						defer wg.Done()
+						if err := am.dropTablesFromPool(p, fmt.Sprintf("Shard:%s:%s", shard, poolK)); err != nil {
+							errChan <- fmt.Errorf("shard '%s' %s: %w", shard, poolK, err)
+						}
+					}(shardName, poolKey, standalonePool)
+				}
+			}
 		}
 	}
 
@@ -551,7 +564,14 @@ func (am *AutoMigrator) parseStructColumns(table registry.TableModel) map[string
 	columns := make(map[string]string)
 
 	for _, f := range table.Fields {
-		columns[f.Fieldname] = f.Fieldtype
+		def := f.Fieldtype
+		if f.NotNull {
+			def += " NOT NULL"
+		}
+		if f.Default != "" {
+			def += " DEFAULT " + f.Default
+		}
+		columns[f.Fieldname] = def
 	}
 
 	return columns
@@ -587,6 +607,12 @@ func (am *AutoMigrator) generateCreateTableSQL(tableName, currentShard string) (
 		}
 		if f.Unique {
 			col = append(col, "UNIQUE")
+		}
+		if f.NotNull {
+			col = append(col, "NOT NULL")
+		}
+		if f.Default != "" {
+			col = append(col, "DEFAULT "+f.Default)
 		}
 
 		defs = append(defs, "  "+strings.Join(col, " "))

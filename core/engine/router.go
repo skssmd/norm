@@ -441,6 +441,8 @@ func (q *Query) getShardPool(info map[string]interface{}) (*driver.PGPool, error
 	var standalonePool *driver.PGPool
 	if spRaw, ok := shardInfo["standalone_pools"]; ok && spRaw != nil {
 		if spMap, ok := spRaw.(map[string]*driver.PGPool); ok {
+			// DEBUG: Print available standalone pools
+			fmt.Printf("DEBUG: Looking for table '%s' in standalone pools of shard '%s'. Available: %v\n", q.table, shardName, spMap)
 			if pool, ok := spMap[q.table]; ok {
 				standalonePool = pool
 			}
@@ -448,7 +450,7 @@ func (q *Query) getShardPool(info map[string]interface{}) (*driver.PGPool, error
 	}
 
 	queryType := q.builder.queryType
-
+	fmt.Printf("DEBUG: getShardPool table=%s shard=%s role=%s queryType=%s hasStandalone=%v\n", q.table, shardName, role, queryType, standalonePool != nil)
 	switch queryType {
 	case "insert", "update", "delete", "bulkinsert":
 		if role == "standalone" && standalonePool != nil {
@@ -531,18 +533,16 @@ func (q *Query) executeStandard(ctx context.Context, dest interface{}, singleRow
 		return err
 	}
 
-	if singleRow {
-		row := pool.Pool.QueryRow(ctx, sql, args...)
-		// TODO: Implement scanning
-		_ = row
-		return fmt.Errorf("First() scanning not yet implemented")
-	}
-
+	// Execute query
 	rows, err := pool.Pool.Query(ctx, sql, args...)
 	if err != nil {
 		return fmt.Errorf("query execution failed: %w", err)
 	}
 	defer rows.Close()
+
+	if dest != nil {
+		return scanRowsToDest(rows, dest)
+	}
 
 	// If dest is nil, print results for demo purposes
 	if dest == nil {
@@ -581,10 +581,8 @@ func (q *Query) executeStandard(ctx context.Context, dest interface{}, singleRow
 		}
 		return nil
 	}
-
-	// TODO: Implement scanning into dest
-	_ = rows
-	return fmt.Errorf("All() scanning not yet implemented")
+	
+	return nil
 }
 
 // scanRowsToMap scans rows into a slice of maps
@@ -896,6 +894,10 @@ func (q *Query) executeAppSideJoin(ctx context.Context, dest interface{}, single
 				joinedResults = append(joinedResults, merged)
 			}
 		}
+	}
+
+	if dest != nil {
+		return scanMapsToDest(joinedResults, dest)
 	}
 
 	// Print results (Table format)

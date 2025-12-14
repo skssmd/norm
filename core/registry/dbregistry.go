@@ -211,7 +211,7 @@ func (s *ShardBuilder) Primary() error {
 	return nil
 }
 
-func (s *ShardBuilder) Standalone() error {
+func (s *ShardBuilder) Standalone(tables ...string) error {
 	s.reg.mu.Lock()
 	defer s.reg.mu.Unlock()
 
@@ -235,9 +235,21 @@ func (s *ShardBuilder) Standalone() error {
 		return err
 	}
 
-	// use shardName + count as key to avoid collision
-	key := fmt.Sprintf("standalone%d", len(s.reg.shards[s.shardName].standalone)+1)
-	s.reg.shards[s.shardName].standalone[key] = pool
+	if len(tables) > 0 {
+		// Register pool for specific tables
+		for _, table := range tables {
+			if _, exists := s.reg.shards[s.shardName].standalone[table]; exists {
+				return fmt.Errorf("standalone pool for table '%s' already exists in shard '%s'", table, s.shardName)
+			}
+			s.reg.shards[s.shardName].standalone[table] = pool
+		}
+	} else {
+		// Fallback: register with generic key (legacy/default behavior)
+		// WARNING: Router looks up by table name, so this might not be reachable for specific queries logic!
+		key := fmt.Sprintf("standalone%d", len(s.reg.shards[s.shardName].standalone)+1)
+		s.reg.shards[s.shardName].standalone[key] = pool
+	}
+
 	s.reg.mode = "shard"
 	return nil
 }
