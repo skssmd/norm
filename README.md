@@ -1,3 +1,19 @@
+```
+   _  _   ___   ___  __  __ 
+  | \| | / _ \ | _ \|  \/  |  
+  | .` || (_) ||   /| |\/| |  
+  |_|\_| \___/ |_|_\|_|  |_|  
+                              
+        .-"""-.
+       /   _   \   [ norm: The Scalable Go ORM For Postgres]
+      |  (o)_(o)|  
+      |   (_)   |   + Automatic Routing
+     / \   U   / \  + R/W Separation
+    |   \ `-' /   | + Table Sharding    
+     \___\___/___/  + Multi-Shard Relations with Integrated Joins and Cascade
+   
+```
+
 # Norm ORM
 
 [![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.24-blue.svg)](https://golang.org/)
@@ -132,11 +148,19 @@ for _, order := range userOrders {
 
 Comprehensive documentation is available in the [`docs/`](docs/) directory:
 
-- [01 - Database Connections](docs/01-database-connections.md)
-- [02 - Table Registration](docs/02-table-registration.md)
-- [03 - Model Definition](docs/03-model-definition.md)
-- [04 - Migrations](docs/04-migrations.md)
-- [05 - CRUD Operations](docs/05-crud-operations.md) - **Includes JOIN and Scanning**
+### Setup & Configuration
+- [01 - Database Connections](docs/01-database-connections.md) - Connection modes and shard setup
+- [02 - Model Definition](docs/02-model-definition.md) - Struct tags and field mapping
+- [03 - Table Registration](docs/03-table-registration.md) - Table-to-shard mapping
+- [04 - Migrations](docs/04-migrations.md) - Auto migrations and schema management
+
+### Operations
+- [05 - INSERT Operations](docs/05-insert.md) - Single and bulk inserts, upserts
+- [06 - SELECT Operations](docs/06-select.md) - Queries and struct scanning
+- [07 - UPDATE Operations](docs/07-update.md) - Pair-based and struct-based updates
+- [08 - DELETE Operations](docs/08-delete.md) - Deletes and soft delete patterns
+- [09 - JOIN Operations](docs/09-joins.md) - Native, app-side, and distributed joins
+- [10 - Raw SQL](docs/10-raw-sql.md) - Raw SQL queries with routing
 
 ## 🎯 Key Concepts
 
@@ -220,7 +244,7 @@ Check out the [`examples/`](examples/) directory for complete working examples:
 Or run the comprehensive test scenarios:
 
 ```bash
-cd cmd
+cd examples
 go run test_all_scenarios.go query.go db.go
 ```
 
