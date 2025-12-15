@@ -1,9 +1,11 @@
 package registry
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/skssmd/norm/core/driver"
 )
@@ -14,8 +16,13 @@ type Registry struct {
 	shards map[string]*ShardPools    // shardName => shard pools
 	mu     sync.RWMutex
 	mode   string // "" | "global" | "shard"
+	cacher Cacher
 }
-
+type Cacher interface {
+	Get(ctx context.Context, key string) ([]byte, error)
+	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
+	Delete(ctx context.Context, pattern string) error // Delete by glob pattern (e.g., *user*)
+}
 // ShardPools holds primary and standalone pools
 type ShardPools struct {
 	primary    *driver.PGPool
@@ -254,6 +261,20 @@ func (s *ShardBuilder) Standalone(tables ...string) error {
 	return nil
 }
 
+// SetCacher sets the global cacher
+func SetCacher(c Cacher) {
+	norm.mu.Lock()
+	defer norm.mu.Unlock()
+	norm.cacher = c
+}
+
+// GetCacher returns the global cacher
+func GetCacher() Cacher {
+	norm.mu.RLock()
+	defer norm.mu.RUnlock()
+	return norm.cacher
+}
+
 // --- Registry Info Functions ---
 
 // GetRegistryInfo returns information about the current registry state
@@ -342,4 +363,7 @@ func Reset() {
 
 	// Reset table registry
 	resetTables()
+
+	// Reset cacher
+	norm.cacher = nil
 }

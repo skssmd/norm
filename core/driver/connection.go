@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 type PGPool struct {
@@ -45,3 +46,23 @@ func Connect(dsn string) (*PGPool, error) {
 func (p *PGPool) Close() {
 	p.Pool.Close()
 }
+
+// ConnectRedis establishes a connection to Redis
+func ConnectRedis(addr, password string, db int) (*redis.Client, error) {
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     addr,
+		Password: password, // no password set
+		DB:       db,       // use default DB
+	})
+
+	// Test connection
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		return nil, err
+	}
+
+	return rdb, nil
+}
+

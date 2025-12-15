@@ -146,21 +146,17 @@ for _, order := range userOrders {
 
 ## 📚 Documentation
 
-Comprehensive documentation is available in the [`docs/`](docs/) directory:
-
-### Setup & Configuration
-- [01 - Database Connections](docs/01-database-connections.md) - Connection modes and shard setup
-- [02 - Model Definition](docs/02-model-definition.md) - Struct tags and field mapping
-- [03 - Table Registration](docs/03-table-registration.md) - Table-to-shard mapping
-- [04 - Migrations](docs/04-migrations.md) - Auto migrations and schema management
-
-### Operations
+- [Getting Started](GETTING_STARTED.md)
+- [Query Builder](QUERY_BUILDER.md)
+- **[Caching Guide](caching.md)** - Detailed guide on caching and invalidation
+- [Transactions](TRANSACTIONS.md)
+- [Migrations](MIGRATIONS.md)
 - [05 - INSERT Operations](docs/05-insert.md) - Single and bulk inserts, upserts
 - [06 - SELECT Operations](docs/06-select.md) - Queries and struct scanning
 - [07 - UPDATE Operations](docs/07-update.md) - Pair-based and struct-based updates
 - [08 - DELETE Operations](docs/08-delete.md) - Deletes and soft delete patterns
 - [09 - JOIN Operations](docs/09-joins.md) - Native, app-side, and distributed joins
-- [10 - Raw SQL](docs/10-raw-sql.md) - Raw SQL queries with routing
+- [10 - Raw SQL](docs/10-raw-sql.md)
 
 ## 🎯 Key Concepts
 

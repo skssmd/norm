@@ -2,10 +2,14 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/skssmd/norm/core/driver"
@@ -20,6 +24,8 @@ type Query struct {
 	joinContext *JoinContext
 	rawSQL      string // Raw SQL query
 	rawShard    string // Explicit shard for raw queries
+	cacheTTL    *time.Duration
+	cacheKeys   []string      // Optional cache keys (max 2)
 	rawArgs     []interface{} // Arguments for raw SQL
 }
 
@@ -353,7 +359,96 @@ func (q *Query) SetShard(shard string) *Query {
 	return q
 }
 
+// Cache enables caching for this query
+// ttl: Duration to cache the result. Default is 5 minutes if not specified.
+// keys: Optional cache keys (up to 2) for targeted invalidation
+func (q *Query) Cache(ttl time.Duration, keys ...string) *Query {
+	if len(keys) > 2 {
+		keys = keys[:2] // Limit to 2 keys
+	}
+	q.cacheTTL = &ttl
+	q.cacheKeys = keys
+	return q
+}
+
+// generateCacheKey generates a unique cache key based on query and args
+// Format: part1:part2:...:hash
+// Joins all non-empty components (tables + keys) followed by the hash
+func (q *Query) generateCacheKey(query string, args []interface{}) string {
+	// Create a unique signature
+	argsJson, _ := json.Marshal(args)
+	signature := fmt.Sprintf("%s|%s", query, argsJson)
+
+	hash := sha256.Sum256([]byte(signature))
+	hashStr := hex.EncodeToString(hash[:])
+
+	parts := []string{}
+
+	// Add tables to parts
+	if q.joinContext != nil {
+		parts = append(parts, q.joinContext.Tables...)
+	} else if q.table != "" {
+		parts = append(parts, q.table)
+	}
+
+	// Add custom keys to parts
+	parts = append(parts, q.cacheKeys...)
+
+	// Add hash as the last part
+	parts = append(parts, hashStr)
+
+	// Join all parts with colon
+	return strings.Join(parts, ":")
+}
+
+// checkCache checks if the query result is cached
+func (q *Query) checkCache(ctx context.Context, query string, args []interface{}) ([]byte, bool, error) {
+	if q.cacheTTL == nil {
+		return nil, false, nil
+	}
+
+	cacher := registry.GetCacher()
+	if cacher == nil {
+		return nil, false, nil
+	}
+
+	key := q.generateCacheKey(query, args)
+	cacheLog("Key: %s", key)
+
+	data, err := cacher.Get(ctx, key)
+	if err != nil {
+		cacheLog("Status: MISS (Pulling from DB)")
+		return nil, false, nil // Cache miss or error
+	}
+
+	cacheLog("Status: HIT")
+	return data, true, nil
+}
+
+// setCache stores the query result in cache
+func (q *Query) setCache(ctx context.Context, query string, args []interface{}, data interface{}) error {
+	if q.cacheTTL == nil {
+		return nil
+	}
+
+	cacher := registry.GetCacher()
+	if cacher == nil {
+		return nil
+	}
+
+	key := q.generateCacheKey(query, args)
+	
+	// Marshal data
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("failed to marshal data for cache: %w", err)
+	}
+
+	return cacher.Set(ctx, key, jsonData, *q.cacheTTL)
+}
+
 // getPool determines which pool to use based on query type and table
+
 func (q *Query) getPool() (*driver.PGPool, error) {
 	// Get registry info
 	info := registry.GetRegistryInfo()
@@ -486,7 +581,7 @@ func (q *Query) getShardPool(info map[string]interface{}) (*driver.PGPool, error
 	if spRaw, ok := shardInfo["standalone_pools"]; ok && spRaw != nil {
 		if spMap, ok := spRaw.(map[string]*driver.PGPool); ok {
 			// DEBUG: Print available standalone pools
-			fmt.Printf("DEBUG: Looking for table '%s' in standalone pools of shard '%s'. Available: %v\n", q.table, shardName, spMap)
+				debugLog("Looking for table '%s' in standalone pools of shard '%s'. Available: %v", q.table, shardName, spMap)
 			if pool, ok := spMap[q.table]; ok {
 				standalonePool = pool
 			}
@@ -494,7 +589,7 @@ func (q *Query) getShardPool(info map[string]interface{}) (*driver.PGPool, error
 	}
 
 	queryType := q.builder.queryType
-	fmt.Printf("DEBUG: getShardPool table=%s shard=%s role=%s queryType=%s hasStandalone=%v\n", q.table, shardName, role, queryType, standalonePool != nil)
+	debugLog("getShardPool table=%s shard=%s role=%s queryType=%s hasStandalone=%v", q.table, shardName, role, queryType, standalonePool != nil)
 	switch queryType {
 	case "insert", "update", "delete", "bulkinsert":
 		if role == "standalone" && standalonePool != nil {
@@ -610,6 +705,21 @@ func (q *Query) executeRaw(ctx context.Context, dest interface{}, singleRow bool
 		return fmt.Errorf("raw SQL requires either a table name, explicit shard, or join context for routing")
 	}
 
+	// Check cache
+	if cachedData, hit, err := q.checkCache(ctx, q.rawSQL, q.rawArgs); err != nil {
+		// Cache check errors are silently ignored (cache is optional)
+	} else if hit {
+		if dest != nil {
+			return json.Unmarshal(cachedData, dest)
+		}
+		var results []map[string]interface{}
+		if err := json.Unmarshal(cachedData, &results); err != nil {
+			return fmt.Errorf("failed to unmarshal cached data: %w", err)
+		}
+		q.printResults(results, true) // From cache
+		return nil
+	}
+
 	// Execute the raw query
 	rows, err := pool.Pool.Query(ctx, q.rawSQL, q.rawArgs...)
 	if err != nil {
@@ -620,7 +730,14 @@ func (q *Query) executeRaw(ctx context.Context, dest interface{}, singleRow bool
 	// Scan results
 	if dest != nil {
 		// scanRowsToDest handles both single struct and slice cases
-		return scanRowsToDest(rows, dest)
+		if err := scanRowsToDest(rows, dest); err != nil {
+			return err
+		}
+		// Set cache
+		if err := q.setCache(ctx, q.rawSQL, q.rawArgs, dest); err != nil {
+			// Cache set errors are silently ignored (cache is optional)
+		}
+		return nil
 	}
 
 	// If dest is nil, print results for demo purposes
@@ -629,31 +746,13 @@ func (q *Query) executeRaw(ctx context.Context, dest interface{}, singleRow bool
 		return fmt.Errorf("failed to scan rows: %w", err)
 	}
 
-	fmt.Printf("\nRaw Query Results (%d rows):\n", len(results))
-	if len(results) > 0 {
-		// Print as table
-		headers := make([]string, 0, len(results[0]))
-		for k := range results[0] {
-			headers = append(headers, k)
-		}
-		sort.Strings(headers)
+	// Set cache for results (using results maps)
+	if err := q.setCache(ctx, q.rawSQL, q.rawArgs, results); err != nil {
+		// Cache set errors are silently ignored (cache is optional)
+	}
 
-		for _, h := range headers {
-			fmt.Printf("%-20s | ", h)
-		}
-		fmt.Println()
-		fmt.Println(strings.Repeat("-", len(headers)*23))
-
-		for _, row := range results {
-			for _, h := range headers {
-				val := fmt.Sprintf("%v", row[h])
-				if len(val) > 18 {
-					val = val[:15] + "..."
-				}
-				fmt.Printf("%-20s | ", val)
-			}
-			fmt.Println()
-		}
+	if IsDebugMode() {
+		q.printResults(results, false) // Not from cache
 	}
 
 	return nil
@@ -714,9 +813,28 @@ func (q *Query) executeStandard(ctx context.Context, dest interface{}, singleRow
 		q.builder.Limit(1)
 	}
 
+	// Build query
 	sql, args, err := q.builder.Build()
 	if err != nil {
 		return err
+	}
+
+	// Check cache
+	if cachedData, hit, err := q.checkCache(ctx, sql, args); err != nil {
+		// Cache check errors are silently ignored (cache is optional)
+	} else if hit {
+		if dest != nil {
+			return json.Unmarshal(cachedData, dest)
+		}
+		// If dest is nil, unmarshal to generic results and print
+		var results []map[string]interface{}
+		if err := json.Unmarshal(cachedData, &results); err != nil {
+			return fmt.Errorf("failed to unmarshal cached data: %w", err)
+		}
+		if IsDebugMode() {
+			q.printResults(results, true) // true = from cache
+		}
+		return nil
 	}
 
 	// Execute query
@@ -727,7 +845,14 @@ func (q *Query) executeStandard(ctx context.Context, dest interface{}, singleRow
 	defer rows.Close()
 
 	if dest != nil {
-		return scanRowsToDest(rows, dest)
+		if err := scanRowsToDest(rows, dest); err != nil {
+			return err
+		}
+		// Set cache
+		if err := q.setCache(ctx, sql, args, dest); err != nil {
+			// Cache set errors are silently ignored (cache is optional)
+		}
+		return nil
 	}
 
 	// If dest is nil, print results for demo purposes
@@ -737,38 +862,52 @@ func (q *Query) executeStandard(ctx context.Context, dest interface{}, singleRow
 			return fmt.Errorf("failed to scan rows: %w", err)
 		}
 
-		fmt.Printf("\nQuery Results (%d rows):\n", len(results))
-		if len(results) > 0 {
-			// Get headers from first row
-			headers := make([]string, 0, len(results[0]))
-			for k := range results[0] {
-				headers = append(headers, k)
-			}
-			sort.Strings(headers)
-
-			// Print headers
-			for _, h := range headers {
-				fmt.Printf("%-20s | ", h)
-			}
-			fmt.Println()
-			fmt.Println(strings.Repeat("-", len(headers)*23))
-
-			// Print rows
-			for _, row := range results {
-				for _, h := range headers {
-					val := fmt.Sprintf("%v", row[h])
-					if len(val) > 18 {
-						val = val[:15] + "..."
-					}
-					fmt.Printf("%-20s | ", val)
-				}
-				fmt.Println()
-			}
+		// Set cache for results
+		if err := q.setCache(ctx, sql, args, results); err != nil {
+			fmt.Printf("Cache set error: %v\n", err)
 		}
+
+		q.printResults(results, false) // false = not from cache
 		return nil
 	}
 	
 	return nil
+}
+
+// printResults prints query results to stdout
+func (q *Query) printResults(results []map[string]interface{}, fromCache bool) {
+	source := "DB"
+	if fromCache {
+		source = "CACHE"
+	}
+	fmt.Printf("\nQuery Results (%d rows) [%s]:\n", len(results), source)
+	if len(results) > 0 {
+		// Get headers from first row
+		headers := make([]string, 0, len(results[0]))
+		for k := range results[0] {
+			headers = append(headers, k)
+		}
+		sort.Strings(headers)
+
+		// Print headers
+		for _, h := range headers {
+			fmt.Printf("%-20s | ", h)
+		}
+		fmt.Println()
+		fmt.Println(strings.Repeat("-", len(headers)*23))
+
+		// Print rows
+		for _, row := range results {
+			for _, h := range headers {
+				val := fmt.Sprintf("%v", row[h])
+				if len(val) > 18 {
+					val = val[:15] + "..."
+				}
+				fmt.Printf("%-20s | ", val)
+			}
+			fmt.Println()
+		}
+	}
 }
 
 // scanRowsToMap scans rows into a slice of maps
@@ -894,7 +1033,30 @@ func (q *Query) isCoLocated() (bool, error) {
 
 // executeAppSideJoin executes a join by fetching data from multiple sources and merging
 func (q *Query) executeAppSideJoin(ctx context.Context, dest interface{}, singleRow bool) error {
-	fmt.Println("  🔄 Executing App-Side Join (Distributed/Skey)...")
+	debugLog("Executing App-Side Join (Distributed/Skey)")
+
+	// Generate a pseudo-query for cache key generation
+	// We'll use the join context to create a unique identifier
+	cacheQuery := fmt.Sprintf("JOIN:%s", strings.Join(q.joinContext.Tables, ","))
+	cacheArgs := q.builder.whereArgs
+
+	// Check cache before executing expensive join
+	if cachedData, hit, err := q.checkCache(ctx, cacheQuery, cacheArgs); err != nil {
+		// Cache check errors are silently ignored (cache is optional)
+	} else if hit {
+		if dest != nil {
+			return json.Unmarshal(cachedData, dest)
+		}
+		// If dest is nil, unmarshal to generic results and print
+		var results []map[string]interface{}
+		if err := json.Unmarshal(cachedData, &results); err != nil {
+			return fmt.Errorf("failed to unmarshal cached data: %w", err)
+		}
+		if IsDebugMode() {
+			q.printResults(results, true) // true = from cache
+		}
+		return nil
+	}
 
 	// 1. Fetch T1
 	// We need to filter columns for T1
@@ -1082,12 +1244,20 @@ func (q *Query) executeAppSideJoin(ctx context.Context, dest interface{}, single
 		}
 	}
 
+	// Set cache for joined results
+	cacheQuery = fmt.Sprintf("JOIN:%s", strings.Join(q.joinContext.Tables, ","))
+	cacheArgs = q.builder.whereArgs
+	if err := q.setCache(ctx, cacheQuery, cacheArgs, joinedResults); err != nil {
+		// Cache set errors are silently ignored (cache is optional)
+	}
+
 	if dest != nil {
 		return scanMapsToDest(joinedResults, dest)
 	}
 
-	// Print results (Table format)
-	fmt.Printf("\nJoined Results (%d rows):\n", len(joinedResults))
+	// Print results (Table format) - only in debug mode
+	if IsDebugMode() {
+		fmt.Printf("\nJoined Results (%d rows):\n", len(joinedResults))
 	if len(joinedResults) > 0 {
 		// Print header
 		// Just print a few columns for demo
@@ -1125,6 +1295,7 @@ func (q *Query) executeAppSideJoin(ctx context.Context, dest interface{}, single
 				fmt.Printf("%-30s | %-30s\n", v1, v2)
 			}
 		}
+	}
 	}
 
 	return nil
@@ -1169,9 +1340,25 @@ func (q *Query) Count(ctx ...context.Context) (int64, error) {
 	q.builder.offset = originalOffset
 
 	var count int64
+
+	// Check cache
+	if cachedData, hit, err := q.checkCache(execCtx, sql, args); err != nil {
+		fmt.Printf("Cache check error: %v\n", err)
+	} else if hit {
+		if err := json.Unmarshal(cachedData, &count); err != nil {
+			return 0, fmt.Errorf("failed to unmarshal cached count: %w", err)
+		}
+		return count, nil
+	}
+
 	err = pool.Pool.QueryRow(execCtx, sql, args...).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count query failed: %w", err)
+	}
+
+	// Set cache
+	if err := q.setCache(execCtx, sql, args, count); err != nil {
+		fmt.Printf("Cache set error: %v\n", err)
 	}
 
 	return count, nil

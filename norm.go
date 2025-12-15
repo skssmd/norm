@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/skssmd/norm/core/driver"
 	"github.com/skssmd/norm/core/engine"
 	"github.com/skssmd/norm/core/migration"
 	"github.com/skssmd/norm/core/registry"
@@ -27,6 +28,30 @@ func Register(dsn string) *registry.ConnBuilder {
 func Reset() {
 	registry.Reset()
 }
+
+// ============================================================
+// Caching Registration
+// ============================================================
+
+// RegisterRedis enables Redis caching
+// addr: Redis address (e.g. "localhost:6379")
+// password: Redis password (empty for none)
+// db: Redis DB index (0 for default)
+func RegisterRedis(addr, password string, db int) error {
+	client, err := driver.ConnectRedis(addr, password, db)
+	if err != nil {
+		return err
+	}
+	registry.SetCacher(engine.NewRedisCacher(client))
+	return nil
+}
+
+// EnableMemoryCache enables in-memory caching
+// This is useful for development or non-distributed applications
+func EnableMemoryCache() {
+	registry.SetCacher(engine.NewMemoryCacher())
+}
+
 
 // ============================================================
 // Table Registration

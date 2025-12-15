@@ -97,9 +97,22 @@ func runScenario(scenario TestScenario) {
 	fmt.Println("\n🔄 Running migrations...")
 	norm.Norm()
 
+	// Setup caching (Redis with fallback to memory)
+	fmt.Println("\n💾 Setting up caching...")
+	redisAddr := "localhost:6379" // Default Redis address
+	err := norm.RegisterRedis(redisAddr, "", 0)
+	if err != nil {
+		fmt.Printf("  ⚠️  Redis not available (%v), falling back to memory cache\n", err)
+		norm.EnableMemoryCache()
+		fmt.Println("  ✓ Memory cache enabled")
+	} else {
+		fmt.Printf("  ✓ Redis cache registered at %s\n", redisAddr)
+	}
+
 	// Run query examples
 	fmt.Println("\n📝 Running query examples...")
-	RunQueryExamples()
+
+	RunCachingExamples()
 
 	// Cleanup
 	if scenario.CleanupFunc != nil {
