@@ -58,6 +58,21 @@ func Table(model interface{}, tableName ...string) *TableModel {
 	} else {
 		name = getTableName(model)
 	}
+	
+	// Validate model
+	t := reflect.TypeOf(model)
+	if t == nil {
+		panic(fmt.Sprintf("cannot register nil model for table '%s'", name))
+	}
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		panic(fmt.Sprintf("model for table '%s' must be a struct, got %s", name, t.Kind()))
+	}
+	if t.NumField() == 0 {
+		panic(fmt.Sprintf("model for table '%s' has no fields", name))
+	}
 
 	tableReg.mu.Lock()
 	defer tableReg.mu.Unlock()
@@ -72,6 +87,8 @@ func Table(model interface{}, tableName ...string) *TableModel {
 
 	// migration bookkeeping
 	registerModelForMigration(table)
+	
+	fmt.Printf("  ✓ Registered table '%s' (model: %s, fields: %d)\n", name, t.Name(), len(table.Fields))
 
 	// RETURN THE SAME POINTER
 	return tableReg.models[name]
@@ -201,7 +218,11 @@ func GetRegisteredTableName(model interface{}) string {
 
 	// Search for matching model type in registry
 	for tableName, registeredModel := range tableReg.models {
-		registeredType := reflect.TypeOf(registeredModel)
+		if registeredModel.Model == nil {
+			continue
+		}
+		
+		registeredType := reflect.TypeOf(registeredModel.Model)
 		if registeredType.Kind() == reflect.Ptr {
 			registeredType = registeredType.Elem()
 		}
@@ -234,6 +255,7 @@ func (tm *TableModel) Primary(shard string) error {
 	}
 
 	tm.Roles["primary"][shard] = struct{}{}
+	fmt.Printf("  ✓ Table '%s' registered to shard '%s' (role: primary)\n", tm.TableName, shard)
 	return nil
 }
 
@@ -245,6 +267,7 @@ func (tm *TableModel) Read(shard string) error {
 		tm.Roles["read"] = make(map[string]struct{})
 	}
 	tm.Roles["read"][shard] = struct{}{}
+	fmt.Printf("  ✓ Table '%s' registered to shard '%s' (role: read)\n", tm.TableName, shard)
 	return nil
 }
 
@@ -256,6 +279,7 @@ func (tm *TableModel) Write(shard string) error {
 		tm.Roles["write"] = make(map[string]struct{})
 	}
 	tm.Roles["write"][shard] = struct{}{}
+	fmt.Printf("  ✓ Table '%s' registered to shard '%s' (role: write)\n", tm.TableName, shard)
 	return nil
 }
 
@@ -267,6 +291,7 @@ func (tm *TableModel) Standalone(shard string) error {
 		tm.Roles["standalone"] = make(map[string]struct{})
 	}
 	tm.Roles["standalone"][shard] = struct{}{}
+	fmt.Printf("  ✓ Table '%s' registered to shard '%s' (role: standalone)\n", tm.TableName, shard)
 	return nil
 }
 // Roles returns a slice of role names assigned to this table
@@ -381,4 +406,44 @@ func resetTables() {
 	tableReg.mu.Lock()
 	defer tableReg.mu.Unlock()
 	tableReg.models = make(map[string]*TableModel)
+}
+
+// PrintRegistryState prints the current state of the table registry for debugging
+func PrintRegistryState() {
+	tableReg.mu.RLock()
+	defer tableReg.mu.RUnlock()
+	
+	fmt.Println("\n📋 CURRENT TABLE REGISTRY STATE:")
+	fmt.Printf("   Total tables: %d\n", len(tableReg.models))
+	
+	if len(tableReg.models) == 0 {
+		fmt.Println("   ⚠️  No tables registered!")
+		return
+	}
+	
+	for tableName, table := range tableReg.models {
+		fmt.Printf("\n   Table: '%s'\n", tableName)
+		if table.Model != nil {
+			modelType := reflect.TypeOf(table.Model)
+			if modelType.Kind() == reflect.Ptr {
+				modelType = modelType.Elem()
+			}
+			fmt.Printf("     Model: %s\n", modelType.Name())
+		}
+		fmt.Printf("     Fields: %d\n", len(table.Fields))
+		
+		if len(table.Roles) == 0 {
+			fmt.Println("     Roles: NONE (global table)")
+		} else {
+			fmt.Println("     Roles:")
+			for role, shardSet := range table.Roles {
+				shards := make([]string, 0, len(shardSet))
+				for s := range shardSet {
+					shards = append(shards, s)
+				}
+				fmt.Printf("       %s: %v\n", role, shards)
+			}
+		}
+	}
+	fmt.Println()
 }

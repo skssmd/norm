@@ -55,6 +55,51 @@ type Log struct {
 	CreatedAt time.Time `norm:"index;notnull;default:NOW()"`
 }
 
+// New test tables for comprehensive caching tests
+
+// Products - Shard 1 (Primary)
+type Product struct {
+	ID          uint      `norm:"index;notnull;pk;auto"`
+	Name        string    `norm:"notnull;max:200"`
+	Description string    `norm:"text"`
+	Price       float64   `norm:"notnull"`
+	Stock       int       `norm:"notnull;default:0"`
+	Category    string    `norm:"index;max:100"`
+	CreatedAt   time.Time `norm:"notnull;default:NOW()"`
+}
+
+// Reviews - Shard 1 (Primary) with fkey to Products and Users
+type Review struct {
+	ID        uint      `norm:"index;notnull;pk;auto"`
+	ProductID uint      `norm:"index;notnull;fkey:products.id;ondelete:cascade"`
+	UserID    uint      `norm:"index;notnull;fkey:users.id;ondelete:cascade"`
+	Rating    int       `norm:"notnull"`
+	Comment   string    `norm:"text"`
+	CreatedAt time.Time `norm:"notnull;default:NOW()"`
+}
+
+// Inventory - Shard 2 (Standalone) with skey to Products
+type Inventory struct {
+	ID         uint      `norm:"index;notnull;pk;auto"`
+	ProductID  *uint     `norm:"skey:products.id;ondelete:setnull"` // Soft key
+	Warehouse  string    `norm:"index;notnull;max:100"`
+	Quantity   int       `norm:"notnull;default:0"`
+	Location   string    `norm:"max:200"`
+	UpdatedAt  time.Time `norm:"notnull;default:NOW()"`
+}
+
+// Notifications - Shard 3 (Standalone) with skey to Users
+type Notification struct {
+	ID        uint      `norm:"index;notnull;pk;auto"`
+	UserID    *uint     `norm:"skey:users.id;ondelete:setnull"` // Soft key
+	Title     string    `norm:"notnull;max:200"`
+	Message   string    `norm:"text;notnull"`
+	IsRead    bool      `norm:"default:false"`
+	Type      string    `norm:"index;max:50"`
+	CreatedAt time.Time `norm:"notnull;default:NOW()"`
+}
+
+
 // TestScenario represents a database connection scenario to test
 type TestScenario struct {
 	Name        string
@@ -111,8 +156,7 @@ func runScenario(scenario TestScenario) {
 
 	// Run query examples
 	fmt.Println("\n📝 Running query examples...")
-
-	RunCachingExamples()
+generateSummary()
 
 	// Cleanup
 	if scenario.CleanupFunc != nil {

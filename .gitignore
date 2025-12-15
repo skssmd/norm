@@ -34,3 +34,4 @@ PROJECT_PLAN.md
 # Environment variables
 .env
 db.go
+benchmark/

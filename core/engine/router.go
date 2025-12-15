@@ -1044,16 +1044,20 @@ func (q *Query) executeAppSideJoin(ctx context.Context, dest interface{}, single
 	if cachedData, hit, err := q.checkCache(ctx, cacheQuery, cacheArgs); err != nil {
 		// Cache check errors are silently ignored (cache is optional)
 	} else if hit {
-		if dest != nil {
-			return json.Unmarshal(cachedData, dest)
-		}
-		// If dest is nil, unmarshal to generic results and print
-		var results []map[string]interface{}
-		if err := json.Unmarshal(cachedData, &results); err != nil {
+		// Unmarshal to map structure first (app-side joins store table-prefixed keys)
+		var cachedResults []map[string]interface{}
+		if err := json.Unmarshal(cachedData, &cachedResults); err != nil {
 			return fmt.Errorf("failed to unmarshal cached data: %w", err)
 		}
+		
+		if dest != nil {
+			// Use scanMapsToDest to properly map table-prefixed keys to struct fields
+			return scanMapsToDest(cachedResults, dest)
+		}
+		
+		// If dest is nil, just print the results
 		if IsDebugMode() {
-			q.printResults(results, true) // true = from cache
+			q.printResults(cachedResults, true) // true = from cache
 		}
 		return nil
 	}

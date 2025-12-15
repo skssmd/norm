@@ -9,7 +9,6 @@ import (
 
 	"github.com/skssmd/norm/core/driver"
 	"github.com/skssmd/norm/core/registry"
-	"github.com/skssmd/norm/core/utils"
 )
 
 // AutoMigrator handles automatic schema migration from structs
@@ -279,12 +278,18 @@ func (am *AutoMigrator) migratePool(pool *driver.PGPool, poolLabel string) error
 // migratePoolForShard runs auto migration on a shard pool, only for tables registered to that shard
 func (am *AutoMigrator) migratePoolForShard( pool *driver.PGPool, shardName, poolLabel string) error {
 	fmt.Printf("🔄 Auto-migrating %s...\n", poolLabel)
-ctx := context.Background()
+	ctx := context.Background()
+	
 	// Filter models that belong to this shard
 	shardModels := am.getModelsForShard(shardName)
 	if len(shardModels) == 0 {
 		fmt.Printf("  ⊘ No tables registered for %s\n", poolLabel)
-		return nil
+		fmt.Printf("  ℹ️  This may indicate:\n")
+		fmt.Printf("     - No models were registered to shard '%s'\n", shardName)
+		fmt.Printf("     - Table registration used wrong shard name\n")
+		fmt.Printf("     - Model struct is not being picked up by migration\n")
+		// Return error to make this failure more visible
+		return fmt.Errorf("no tables registered for %s (shard: %s)", poolLabel, shardName)
 	}
 
 	// Sort models by dependency (tables without foreign keys first)
@@ -330,30 +335,60 @@ ctx := context.Background()
 // getModelsForShard returns only models that are registered to the specified shard
 func (am *AutoMigrator) getModelsForShard(shardName string) []interface{} {
 	var shardModels []interface{}
+	
+	fmt.Printf("  🔍 Searching for models registered to shard '%s'...\n", shardName)
+	fmt.Printf("  📋 Total models to check: %d\n", len(am.models))
+	
+	// Print registry state for debugging
+	registry.PrintRegistryState()
 
 	for _, model := range am.models {
 		// Get the registered table name for this model
 		tableName := getTableNameFromStruct(model)
+		
+		// Debug: Show what we're checking
+		modelType := reflect.TypeOf(model)
+		if modelType.Kind() == reflect.Ptr {
+			modelType = modelType.Elem()
+		}
+		fmt.Printf("    Checking model: %s (table: %s)\n", modelType.Name(), tableName)
 
 		// Try to get the TableModel from registry
 		table, exists := registry.GetModel(tableName)
 		if !exists {
+			fmt.Printf("      ❌ Table '%s' not found in registry\n", tableName)
 			continue
 		}
+		
+		// Show registered roles
+		fmt.Printf("      Roles: ")
+		for role, shardSet := range table.Roles {
+			shards := make([]string, 0, len(shardSet))
+			for s := range shardSet {
+				shards = append(shards, s)
+			}
+			fmt.Printf("%s=%v ", role, shards)
+		}
+		fmt.Println()
 
 		// Check if the shard exists in any role
 		found := false
-		for _, shardSet := range table.Roles {
+		for role, shardSet := range table.Roles {
 			if _, ok := shardSet[shardName]; ok {
 				found = true
+				fmt.Printf("      ✓ Found in role '%s' for shard '%s'\n", role, shardName)
 				break
 			}
 		}
 
 		if found {
 			shardModels = append(shardModels, model)
+		} else {
+			fmt.Printf("      ⊘ Not registered to shard '%s'\n", shardName)
 		}
 	}
+	
+	fmt.Printf("  📊 Found %d model(s) for shard '%s'\n\n", len(shardModels), shardName)
 
 	return shardModels
 }
@@ -695,24 +730,20 @@ func (am *AutoMigrator) generateCreateTableSQL(tableName, currentShard string) (
 
 
 // getTableNameFromStruct determines the table name for a model.
-// It first prefers the explicitly registered table name from the registry,
-// and only falls back to deriving from the struct name (snake_case + plural)
-// when no registration is found. This keeps migrations consistent with
-// RegisterTable(.., "custom_name").
+// It ONLY uses the explicitly registered table name from the registry.
+// If no registration is found, it panics to ensure all tables are explicitly registered.
 func getTableNameFromStruct(model interface{}) string {
-	// Prefer explicit registration from the table registry
-	if registered := registry.GetRegisteredTableName(model); registered != "" {
+	// Get explicit registration from the table registry
+	registered := registry.GetRegisteredTableName(model)
+	if registered != "" {
 		return registered
 	}
 
-	// Fallback: derive from struct name
+	// No fallback - require explicit registration
 	t := reflect.TypeOf(model)
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
-
-	name := t.Name()
-	// Convert to snake_case and pluralize
-	snakeName := utils.ToSnakeCase(name)
-	return utils.Pluralize(snakeName)
+	
+	panic(fmt.Sprintf("Table name not found for model '%s'. Please explicitly register this model using RegisterTable(model, \"table_name\")", t.Name()))
 }
