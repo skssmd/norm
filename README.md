@@ -21,7 +21,7 @@
 
 **Norm** is a powerful, flexible ORM for Go that supports multiple database architectures including monolithic, read/write split, and sharded configurations. Built on PostgreSQL with pgx/v5, Norm provides automatic query routing, intelligent join handling, and seamless struct scanning.
 
-## WHy Norm
+## Why Norm
 Please see the benchmark [here](docs/benchmark.md)
 
 ## ✨ Features
