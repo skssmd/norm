@@ -2,6 +2,8 @@
 
 Norm provides built-in caching support to dramatically improve query performance for frequently accessed data.
 
+> **Performance Note**: Norm uses a "Top-Level Cache" optimization that checks the cache **before** building the query, resulting in **<0.1ms latency** on cache hits (matching Raw SQL performance).
+
 ## Quick Start
 
 ```go
@@ -10,11 +12,12 @@ norm.EnableMemoryCache()
 // or
 norm.RegisterRedis("localhost:6379", "", 0)
 
-// 2. Add .Cache() to any query
+// 2. Use WithCache() at the start of the chain
 var users []User
-norm.Table("users").
+
+norm.WithCache(5 * time.Minute).
+    Table("users").
     Select().
-    Cache(5 * time.Minute).
     All(ctx, &users)
 ```
 
@@ -55,34 +58,36 @@ if err != nil {
 
 ### Simple Caching
 
+Use `norm.WithCache(ttl)` to enable caching for a query.
+
 ```go
 // Cache for 5 minutes
-norm.Table("users").
+norm.WithCache(5 * time.Minute).
+    Table("users").
     Select().
-    Cache(5 * time.Minute).
     All(ctx, &users)
 ```
 
 **First run:** Database query + cache storage  
-**Subsequent runs:** Instant return from cache
+**Subsequent runs:** Instant return from cache (<0.1ms)
 
 ### Cache with WHERE Clause
 
 ```go
-// Each unique query gets its own cache entry
-norm.Table("users").
+// Each unique query gets its own cache entry automatically
+norm.WithCache(time.Minute).
+    Table("users").
     Select().
     Where("status = $1", "active").
-    Cache(time.Minute).
     All(ctx, &users)
 ```
 
 ## Optional Cache Keys
 
-The `.Cache()` method accepts up to **2 optional keys** for targeted invalidation:
+`WithCache` accepts up to **2 optional keys** for targeted invalidation:
 
 ```go
-Cache(ttl time.Duration, keys ...string)
+WithCache(ttl time.Duration, keys ...string)
 ```
 
 ### Why Use Keys?
@@ -93,10 +98,10 @@ Keys allow you to **invalidate specific subsets** of cached data instead of clea
 
 ```go
 // Tag query with "active"
-norm.Table("users").
+norm.WithCache(time.Minute, "active").
+    Table("users").
     Select().
     Where("status = $1", "active").
-    Cache(time.Minute, "active").
     All(ctx, &users)
 
 // Later: Invalidate only "active" queries
@@ -112,62 +117,44 @@ norm.Table("users").
 ### Two Keys
 
 ```go
-// Tag with "active" AND "premium"
-norm.Table("users").
+// Tag with "userid" AND "productid"
+norm.WithCache(time.Minute, "userid", "productid").
+    Table("users").
     Select().
     Where("status = $1 AND tier = $2", "active", "premium").
-    Cache(time.Minute, "active", "premium").
     All(ctx, &users)
 
-// Invalidate all "premium" queries
-InvalidateCacheReferenced("premium")
+// Invalidate all "productid" queries
+InvalidateCacheReferenced("productid")
 
-// Or invalidate all "active" queries
-InvalidateCacheReferenced("active")
+// Or invalidate all "userid" queries
+InvalidateCacheReferenced("userid")
 ```
 
 **Cache key format:** `users:active:premium:hash...`
 
-### Common Key Patterns
-
-```go
-// By status
-Cache(ttl, "active")
-Cache(ttl, "pending")
-Cache(ttl, "archived")
-
-// By role
-Cache(ttl, "admin")
-Cache(ttl, "user")
-
-// By tier
-Cache(ttl, "premium")
-Cache(ttl, "trial")
-
-// Hierarchical
-Cache(ttl, "reports", "monthly")
-Cache(ttl, "reports", "yearly")
-```
 
 ## Caching JOINs
+
+Norm's caching works seamlessly with both native and app-side joins.
 
 ### Native JOIN (Co-located)
 
 ```go
 // Automatic cache key: users:orders:hash...
-norm.Table("users", "id", "orders", "user_id").
+norm.WithCache(time.Minute).
+    Table("users", "id", "orders", "user_id").
     Select("users.name", "orders.total").
-    Cache(time.Minute).
     All(ctx, &results)
 ```
 
 ### App-Side JOIN (Distributed)
 
 ```go
-// Works with skey or different shards
-norm.Table("users", "id", "analytics", "user_id").
+// Works across shards with <0.1ms cache hit latency
+norm.WithCache(time.Minute).
+    Table("users", "id", "analytics", "user_id").
     Select("users.name", "analytics.event_type").
-    Cache(time.Minute).
     All(ctx, &results)
 ```
 
@@ -175,13 +162,11 @@ norm.Table("users", "id", "analytics", "user_id").
 
 ```go
 // Tag expensive joins
-norm.Table("users", "id", "orders", "user_id").
+norm.WithCache(time.Hour, "key1", "key2").
+    Table("users", "id", "orders", "user_id").
     Select("users.name", "orders.total").
     Where("orders.status = $1", "completed").
-    Cache(time.Hour, "reports", "completed").
     All(ctx, &results)
-
-// Cache key: users:orders:reports:completed:hash...
 ```
 
 ## Cache Invalidation
@@ -191,17 +176,17 @@ norm.Table("users", "id", "orders", "user_id").
 Invalidates **any** cache entry containing the key.
 
 ```go
-// Invalidate ALL queries involving "users"
+// Invalidate ALL queries involving "key1"
 norm.Table("users").
     Update("name", "New Name").
     Where("id = $1", userId).
-    InvalidateCacheReferenced("users").
+    InvalidateCacheReferenced("key1").
     Exec(ctx)
 
 // Invalidates:
 // - users:hash...
-// - users:active:hash...
-// - users:orders:hash...
+// - users:key1:hash...
+// - users:key1:key2:hash...
 ```
 
 ### Strict Invalidation
@@ -209,14 +194,14 @@ norm.Table("users").
 Invalidates only caches with **exact key sequence**.
 
 ```go
-// Only invalidates queries with BOTH "active" AND "premium"
+// Only invalidates queries with BOTH "key1" AND "key2"
 norm.Table("users").
     Update("tier", "basic").
-    InvalidateCache("active", "premium").
+    InvalidateCache("key1", "key2").
     Exec(ctx)
 
-// Invalidates: users:active:premium:hash... ✓
-// Keeps: users:active:hash... ✗
+// Invalidates: users:key1:key2:hash... ✓
+// Keeps: users:key1:hash... ✗
 ```
 
 ## Cache Key Format
@@ -231,10 +216,10 @@ table1:table2:key1:key2:hash
 
 | Query | Cache Key |
 |-------|-----------|
-| `Table("users").Cache(ttl)` | `users:abc123...` |
-| `Table("users").Cache(ttl, "active")` | `users:active:abc123...` |
-| `Table("users").Cache(ttl, "active", "premium")` | `users:active:premium:abc123...` |
-| `Table("users", "id", "orders", "user_id").Cache(ttl)` | `users:orders:abc123...` |
+| `WithCache(ttl).Table("users")` | `users:abc123...` |
+| `WithCache(ttl, "key1").Table("users")` | `users:key1:abc123...` |
+| `WithCache(ttl, "key1", "key2").Table("users")` | `users:key1:key2:abc123...` |
+| `WithCache(ttl).Table("users", "orders")` | `users:orders:abc123...` |
 
 ## Best Practices
 
@@ -253,37 +238,8 @@ table1:table2:key1:key2:hash
 
 3. **Tag expensive queries**
    ```go
-   Cache(time.Hour, "dashboard", "analytics")
+   norm.WithCache(time.Hour, "key1", "key2")
    ```
-
-4. **Use consistent naming**
-   ```go
-   // Good
-   "active", "inactive", "pending"
-   
-   // Avoid
-   "active", "not_active", "isActive"
-   ```
-
-5. **Monitor cache hits**
-   ```
-   [CACHE] Status: HIT   <- Good!
-   [CACHE] Status: MISS  <- First run
-   ```
-
-## Performance Tips
-
-**Cache these:**
-- Dashboard queries
-- User profiles
-- Product catalogs
-- Configuration data
-- Reports
-
-**Don't cache these:**
-- Real-time data
-- Frequently updated counters
-- Write-heavy data
 
 ## Complete Example
 
@@ -304,24 +260,24 @@ func main() {
     
     // Cache simple query
     var users []User
-    norm.Table("users").
+    norm.WithCache(5 * time.Minute, "key1").
+        Table("users").
         Select().
         Where("status = $1", "active").
-        Cache(5 * time.Minute, "active").
         All(ctx, &users)
     
     // Cache JOIN query
     var userOrders []UserOrder
-    norm.Table("users", "id", "orders", "user_id").
+    norm.WithCache(10 * time.Minute, "key2").
+        Table("users", "id", "orders", "user_id").
         Select("users.name", "orders.total").
-        Cache(10 * time.Minute, "orders").
         All(ctx, &userOrders)
     
     // Update and invalidate
     norm.Table("users").
         Update("status", "inactive").
         Where("id = $1", 123).
-        InvalidateCacheReferenced("active").
+        InvalidateCacheReferenced("key1").
         Exec(ctx)
 }
 ```

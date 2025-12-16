@@ -220,9 +220,9 @@ func testSimpleSelects(ctx context.Context) {
 	runTest(ctx, "Select All Users", func(iteration int) TestResult {
 		start := time.Now()
 		var users []User
-		norm.Table("users").
+		norm.WithCache(time.Minute, "test", "users").
+			Table("users").
 			Select().
-			Cache(time.Minute, "test", "users").
 			All(ctx, &users)
 		allUsersRuns[iteration] = users
 		return TestResult{
@@ -251,9 +251,9 @@ func testSimpleSelects(ctx context.Context) {
 	runTest(ctx, "Select All Products", func(iteration int) TestResult {
 		start := time.Now()
 		var products []Product
-		norm.Table("products").
+		norm.WithCache(time.Minute, "test", "products").
+			Table("products").
 			Select().
-			Cache(time.Minute, "test", "products").
 			All(ctx, &products)
 		allProductsRuns[iteration] = products
 		return TestResult{
@@ -282,10 +282,10 @@ func testSimpleSelects(ctx context.Context) {
 	runTest(ctx, "Select Active Orders", func(iteration int) TestResult {
 		start := time.Now()
 		var orders []Order
-		norm.Table("orders").
+		norm.WithCache(time.Minute, "test", "completed-orders").
+			Table("orders").
 			Select().
 			Where("status = $1", "completed").
-			Cache(time.Minute, "test", "completed-orders").
 			All(ctx, &orders)
 		allOrdersRuns[iteration] = orders
 		return TestResult{
@@ -324,9 +324,9 @@ func testNativeJoins(ctx context.Context) {
 	runTest(ctx, "Users JOIN Orders", func(iteration int) TestResult {
 		start := time.Now()
 		var results []UserOrder
-		norm.Table("users", "id", "orders", "user_id").
+		norm.WithCache(time.Minute, "test", "user-orders").
+			Table("users", "id", "orders", "user_id").
 			Select("users.fullname", "orders.total").
-			Cache(time.Minute, "test", "user-orders").
 			All(ctx, &results)
 		allUserOrdersRuns[iteration] = results
 		return TestResult{
@@ -358,9 +358,9 @@ func testNativeJoins(ctx context.Context) {
 	runTest(ctx, "Products JOIN Reviews", func(iteration int) TestResult {
 		start := time.Now()
 		var results []ProductReview
-		norm.Table("products", "id", "reviews", "product_id").
+		norm.WithCache(time.Minute, "test", "product-reviews").
+			Table("products", "id", "reviews", "product_id").
 			Select("products.name", "reviews.rating").
-			Cache(time.Minute, "test", "product-reviews").
 			All(ctx, &results)
 		allProductReviewsRuns[iteration] = results
 		return TestResult{
@@ -399,9 +399,9 @@ func testAppSideJoins(ctx context.Context) {
 	runTest(ctx, "Products JOIN Inventors", func(iteration int) TestResult {
 		start := time.Now()
 		var results []ProductInventors
-		norm.Table("products", "id", "inventors", "product_id").
+		norm.WithCache(time.Minute, "test", "product-inventors").
+			Table("products", "id", "inventors", "product_id").
 			Select("products.name", "inventors.warehouse", "inventors.quantity").
-			Cache(time.Minute, "test", "product-inventors").
 			All(ctx, &results)
 		allProductInventorsRuns[iteration] = results
 		return TestResult{
@@ -434,9 +434,9 @@ func testAppSideJoins(ctx context.Context) {
 	runTest(ctx, "Users JOIN Notifications", func(iteration int) TestResult {
 		start := time.Now()
 		var results []UserNotification
-		norm.Table("users", "id", "notifications", "user_id").
+		norm.WithCache(time.Minute, "test", "user-notifications").
+			Table("users", "id", "notifications", "user_id").
 			Select("users.fullname", "notifications.title", "notifications.type").
-			Cache(time.Minute, "test", "user-notifications").
 			All(ctx, &results)
 		allUserNotificationsRuns[iteration] = results
 		return TestResult{
@@ -474,10 +474,10 @@ func testComplexJoins(ctx context.Context) {
 	runTest(ctx, "Users-Orders-Reviews Triple JOIN", func(iteration int) TestResult {
 		start := time.Now()
 		var results []UserOrderReview
-		norm.Table("users", "id", "orders", "user_id").
+		norm.WithCache(time.Minute, "test", "complex-join").
+			Table("users", "id", "orders", "user_id").
 			Select("users.fullname", "orders.total").
 			Where("orders.status = $1", "completed").
-			Cache(time.Minute, "test", "complex-join").
 			All(ctx, &results)
 		allComplexJoinRuns[iteration] = results
 		return TestResult{

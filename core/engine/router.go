@@ -375,6 +375,12 @@ func (q *Query) Cache(ttl time.Duration, keys ...string) *Query {
 // Format: part1:part2:...:hash
 // Joins all non-empty components (tables + keys) followed by the hash
 func (q *Query) generateCacheKey(query string, args []interface{}) string {
+	// Optimization: If explicit cache keys are provided, use them directly
+	// This allows checking cache BEFORE building the query logic
+	if len(q.cacheKeys) > 0 {
+		return strings.Join(q.cacheKeys, ":")
+	}
+
 	// Create a unique signature
 	argsJson, _ := json.Marshal(args)
 	signature := fmt.Sprintf("%s|%s", query, argsJson)
@@ -390,9 +396,6 @@ func (q *Query) generateCacheKey(query string, args []interface{}) string {
 	} else if q.table != "" {
 		parts = append(parts, q.table)
 	}
-
-	// Add custom keys to parts
-	parts = append(parts, q.cacheKeys...)
 
 	// Add hash as the last part
 	parts = append(parts, hashStr)
@@ -653,6 +656,24 @@ func (q *Query) First(ctx context.Context, dest interface{}) error {
 
 // All executes query and returns all rows
 func (q *Query) All(ctx context.Context, dest interface{}) error {
+	// Optimization: Check cache explicitly BEFORE building query
+	// This works if explicit cache keys are provided via .Cache()
+	if len(q.cacheKeys) > 0 && q.cacheTTL != nil {
+		// Pass empty query/args as they are ignored by generateCacheKey when keys are present
+		if data, hit, _ := q.checkCache(ctx, "", nil); hit {
+			if dest != nil {
+				return json.Unmarshal(data, dest)
+			}
+			// For inspecting results if dest is nil
+			var results []map[string]interface{}
+			if err := json.Unmarshal(data, &results); err != nil {
+				return fmt.Errorf("failed to unmarshal cached data: %w", err)
+			}
+			q.printResults(results, true)
+			return nil
+		}
+	}
+
 	if q.rawSQL != "" {
 		return q.executeRaw(ctx, dest, false)
 	}
@@ -1248,15 +1269,26 @@ func (q *Query) executeAppSideJoin(ctx context.Context, dest interface{}, single
 		}
 	}
 
-	// Set cache for joined results
+	// Prepare cache key
 	cacheQuery = fmt.Sprintf("JOIN:%s", strings.Join(q.joinContext.Tables, ","))
 	cacheArgs = q.builder.whereArgs
-	if err := q.setCache(ctx, cacheQuery, cacheArgs, joinedResults); err != nil {
-		// Cache set errors are silently ignored (cache is optional)
-	}
 
 	if dest != nil {
-		return scanMapsToDest(joinedResults, dest)
+		if err := scanMapsToDest(joinedResults, dest); err != nil {
+			return err
+		}
+		// Optimization: Cache the POPULATED struct (dest) instead of the raw map.
+		// This ensures that the cached JSON matches the struct fields (Name, Total)
+		// rather than internal map keys (users.name, orders.total), allowing json.Unmarshal to work.
+		if err := q.setCache(ctx, cacheQuery, cacheArgs, dest); err != nil {
+			// Cache set errors are silently ignored (cache is optional)
+		}
+		return nil
+	}
+
+	// Fallback: Set cache for joined results (maps) if dest is nil
+	if err := q.setCache(ctx, cacheQuery, cacheArgs, joinedResults); err != nil {
+		// Cache set errors are silently ignored (cache is optional)
 	}
 
 	// Print results (Table format) - only in debug mode

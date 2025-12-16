@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/skssmd/norm/core/driver"
 	"github.com/skssmd/norm/core/engine"
@@ -69,6 +70,14 @@ func RegisterTable(model interface{}, tableName ...string) *registry.TableModel 
 // ============================================================
 // Query Builder Functions
 // ============================================================
+
+// WithCache creates a query context with caching enabled.
+// Use this to check cache BEFORE building the query logic.
+// Usage: norm.WithCache(time.Minute, "key").Table(...)
+func WithCache(ttl time.Duration, keys ...string) *engine.Query {
+	q := &engine.Query{}
+	return q.Cache(ttl, keys...)
+}
 
 // Table creates a query builder for the specified table or model
 // Usage:
