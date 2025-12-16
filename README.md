@@ -157,6 +157,7 @@ for _, order := range userOrders {
 - [08 - DELETE Operations](docs/08-delete.md) - Deletes and soft delete patterns
 - [09 - JOIN Operations](docs/09-joins.md) - Native, app-side, and distributed joins
 - [10 - Raw SQL](docs/10-raw-sql.md)
+- [11 - Caching](docs/11-caching.md)
 
 ## 🎯 Key Concepts
 
