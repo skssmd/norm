@@ -130,7 +130,7 @@ func ProductsJoininventories(ctx context.Context) ([]Result, error) {
 | Approach | Avg No Cache | Avg With Cache |
 |----------|--------------|----------------|
 | Single DB Raw SQL | 566.271ms | 358µs |
-| Multi-Shard Raw SQL | 6.077336s | 337µs |
+| Multi-Shard Raw SQL | 7.077336s | 337µs |
 | Norm ORM | 641.169ms | 350µs |
 
 
