@@ -21,6 +21,8 @@
 
 **Norm** is a powerful, flexible ORM for Go that supports multiple database architectures including monolithic, read/write split, and sharded configurations. Built on PostgreSQL with pgx/v5, Norm provides automatic query routing, intelligent join handling, and seamless struct scanning.
 
+## WHy Norm
+    Please see the benchmark [here](docs/benchmark.md)
 ## ✨ Features
 
 - 🚀 **Fluent Query Builder** - Intuitive, chainable API for all CRUD operations
@@ -146,18 +148,17 @@ for _, order := range userOrders {
 
 ## 📚 Documentation
 
-- [Getting Started](GETTING_STARTED.md)
-- [Query Builder](QUERY_BUILDER.md)
-- **[Caching Guide](caching.md)** - Detailed guide on caching and invalidation
-- [Transactions](TRANSACTIONS.md)
-- [Migrations](MIGRATIONS.md)
-- [05 - INSERT Operations](docs/05-insert.md) - Single and bulk inserts, upserts
-- [06 - SELECT Operations](docs/06-select.md) - Queries and struct scanning
-- [07 - UPDATE Operations](docs/07-update.md) - Pair-based and struct-based updates
-- [08 - DELETE Operations](docs/08-delete.md) - Deletes and soft delete patterns
-- [09 - JOIN Operations](docs/09-joins.md) - Native, app-side, and distributed joins
-- [10 - Raw SQL](docs/10-raw-sql.md)
-- [11 - Caching](docs/11-caching.md)
+- [Database Connections](docs/01-database-connections.md) - Setup primary, read, write, and sharded databases
+- [Model Definitions](docs/02-model-definitions.md) - Define your models with struct tags
+- [Table Registration](docs/03-table-registration.md) - Register your models with Norm
+- [Auto Migrations](docs/04-migrations.md) - Automatically create tables from your models
+- [INSERT Operations](docs/05-insert.md) - Single and bulk inserts, upserts
+- [SELECT Operations](docs/06-select.md) - Queries and struct scanning
+- [UPDATE Operations](docs/07-update.md) - Pair-based and struct-based updates
+- [DELETE Operations](docs/08-delete.md) - Deletes and soft delete patterns
+- [JOIN Operations](docs/09-joins.md) - Native, app-side, and distributed joins
+- [Raw SQL](docs/10-raw-sql.md) - Execute raw SQL queries
+- [Caching](docs/11-caching.md) - Cache query results for faster access
 
 ## 🎯 Key Concepts
 
@@ -238,12 +239,7 @@ Check out the [`examples/`](examples/) directory for complete working examples:
 - Bulk operations
 - Migration examples
 
-Or run the comprehensive test scenarios:
 
-```bash
-cd examples
-go run test_all_scenarios.go query.go db.go
-```
 
 ## 🤝 Contributing
 

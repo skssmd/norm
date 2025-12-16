@@ -477,7 +477,7 @@ func testComplexJoins(ctx context.Context) {
 		norm.WithCache(time.Minute, "test", "complex-join").
 			Table("users", "id", "orders", "user_id").
 			Select("users.fullname", "orders.total").
-			Where("orders.status = $1", "completed").
+			Where("users.fullname = $1 and orders.status = $2","Bob Smith", "completed").
 			All(ctx, &results)
 		allComplexJoinRuns[iteration] = results
 		return TestResult{
