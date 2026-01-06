@@ -678,11 +678,18 @@ func (q *Query[T]) executeWithReturn(ctx context.Context, sql string, args []int
 	}
 	defer rows.Close()
 
-	// Important: Scan directly into q.model
-	// scanRowsToDest expects a pointer to the destination.
-	// Since q.model is T, we pass its address &q.model.
-	if err := scanRowsToDest(rows, &q.model); err != nil {
-		return q.model, err
+	// Check if T is a pointer type
+	modelValue := reflect.ValueOf(q.model)
+	if modelValue.Kind() == reflect.Ptr {
+		// T is already a pointer (e.g., *User), scan directly into it
+		if err := scanRowsToDest(rows, q.model); err != nil {
+			return q.model, err
+		}
+	} else {
+		// T is a value type, scan into &q.model
+		if err := scanRowsToDest(rows, &q.model); err != nil {
+			return q.model, err
+		}
 	}
 
 	return q.model, nil
