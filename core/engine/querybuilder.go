@@ -35,8 +35,9 @@ type QueryBuilder struct {
 	orderBy         string
 	limit           int
 	offset          int
-	queryType       string // "select", "update", "delete", "insert", "bulkinsert"
-	joins           []JoinDefinition
+	queryType        string // "select", "update", "delete", "insert", "bulkinsert"
+	joins            []JoinDefinition
+	returningColumns []string
 }
 
 // From creates a new query builder for the specified model
@@ -248,6 +249,12 @@ func (qb *QueryBuilder) Insert(model interface{}) *QueryBuilder {
 func (qb *QueryBuilder) InsertNonZero(model interface{}) *QueryBuilder {
 	qb.queryType = "insert"
 	qb.insertFields = qb.extractFieldsFromModel(model)
+	return qb
+}
+
+// Returning specifies columns to return after INSERT
+func (qb *QueryBuilder) Returning(cols ...string) *QueryBuilder {
+	qb.returningColumns = cols
 	return qb
 }
 
@@ -516,6 +523,16 @@ func (qb *QueryBuilder) buildInsert() (string, []interface{}, error) {
 				updates = append(updates, fmt.Sprintf("%s = EXCLUDED.%s", col, col))
 			}
 			sql.WriteString(strings.Join(updates, ", "))
+		}
+	}
+
+	// Add RETURNING clause if specified
+	if qb.returningColumns != nil {
+		sql.WriteString(" RETURNING ")
+		if len(qb.returningColumns) == 0 {
+			sql.WriteString("*")
+		} else {
+			sql.WriteString(strings.Join(qb.returningColumns, ", "))
 		}
 	}
 

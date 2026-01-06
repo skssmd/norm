@@ -643,6 +643,46 @@ func (q *Query) Exec(ctx ...context.Context) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+// Return executes an INSERT query and returns the populated model
+// Usage: user, err := norm.Table(user).Insert().Return()
+// Return("id", "name") only populates specified fields
+func (q *Query) Return(cols ...string) (interface{}, error) {
+	// Use provided context if any, else Background
+	execCtx := context.Background()
+
+	// 1. Set returning columns in builder
+	q.builder.Returning(cols...)
+
+	// 2. Build query
+	sql, args, err := q.builder.Build()
+	if err != nil {
+		return nil, err
+	}
+
+	// 3. Get pool
+	pool, err := q.getPool()
+	if err != nil {
+		return nil, err
+	}
+
+	return q.executeWithReturn(execCtx, sql, args, pool)
+}
+
+// executeWithReturn handles the actual execution and scanning for Return()
+func (q *Query) executeWithReturn(ctx context.Context, sql string, args []interface{}, pool *driver.PGPool) (interface{}, error) {
+	rows, err := pool.Pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("insert with return failed: %w", err)
+	}
+	defer rows.Close()
+
+	if err := scanRowsToDest(rows, q.model); err != nil {
+		return nil, err
+	}
+
+	return q.model, nil
+}
+
 // First executes query and returns first row
 func (q *Query) First(ctx context.Context, dest interface{}) error {
 	if q.rawSQL != "" {
@@ -682,6 +722,37 @@ func (q *Query) All(ctx context.Context, dest interface{}) error {
 	}
 	return q.executeStandard(ctx, dest, false)
 }
+
+
+// All executes query and returns all rows
+func (q *Query) Batch(ctx context.Context, dest interface{}) error {
+	// Optimization: Check cache explicitly BEFORE building query
+	// This works if explicit cache keys are provided via .Cache()
+	if len(q.cacheKeys) > 0 && q.cacheTTL != nil {
+		// Pass empty query/args as they are ignored by generateCacheKey when keys are present
+		if data, hit, _ := q.checkCache(ctx, "", nil); hit {
+			if dest != nil {
+				return json.Unmarshal(data, dest)
+			}
+			// For inspecting results if dest is nil
+			var results []map[string]interface{}
+			if err := json.Unmarshal(data, &results); err != nil {
+				return fmt.Errorf("failed to unmarshal cached data: %w", err)
+			}
+			q.printResults(results, true)
+			return nil
+		}
+	}
+
+	if q.rawSQL != "" {
+		return q.executeRaw(ctx, dest, false)
+	}
+	if q.joinContext != nil {
+		return q.executeJoin(ctx, dest, false)
+	}
+	return q.executeStandard(ctx, dest, false)
+}
+
 
 // executeRaw executes a raw SQL query with proper routing
 func (q *Query) executeRaw(ctx context.Context, dest interface{}, singleRow bool) error {
