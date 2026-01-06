@@ -17,10 +17,10 @@ import (
 )
 
 // Query represents an executable query with routing
-type Query struct {
+type Query[T any] struct {
 	builder     *QueryBuilder
 	table       string
-	model       interface{}
+	model       T
 	joinContext *JoinContext
 	rawSQL      string // Raw SQL query
 	rawShard    string // Explicit shard for raw queries
@@ -37,7 +37,7 @@ type JoinContext struct {
 }
 
 // From creates a new query with routing from model
-func (q *Query) From(model interface{}) *Query {
+func (q *Query[T]) From(model T) *Query[T] {
 	q.model = model
 	q.builder = From(model)
 	q.table = q.builder.tableName
@@ -46,10 +46,8 @@ func (q *Query) From(model interface{}) *Query {
 
 // Table sets the table name or model for the query
 // Accepts either string (table name) or struct (model with data)
-// Table sets the table name or model for the query
-// Accepts either string (table name) or struct (model with data)
 // Supports join syntax: Table("users", "id", "orders", "user_id")
-func (q *Query) Table(args ...interface{}) *Query {
+func (q *Query[T]) Table(args ...interface{}) *Query[T] {
 	if len(args) == 0 {
 		return q
 	}
@@ -81,6 +79,10 @@ func (q *Query) Table(args ...interface{}) *Query {
 				updateFields: make(map[string]interface{}),
 				insertFields: make(map[string]interface{}),
 				joins:        []JoinDefinition{},
+			}
+			// Important: Update q.model if we're using struct-based entry
+			if model, ok := v.(T); ok {
+				q.model = model
 			}
 		}
 		return q
@@ -160,13 +162,13 @@ func (q *Query) Table(args ...interface{}) *Query {
 }
 
 // Select specifies columns to select
-func (q *Query) Select(fields ...interface{}) *Query {
+func (q *Query[T]) Select(fields ...interface{}) *Query[T] {
 	q.builder.Select(fields...)
 	return q
 }
 
 // Where adds WHERE clause
-func (q *Query) Where(condition string, args ...interface{}) *Query {
+func (q *Query[T]) Where(condition string, args ...interface{}) *Query[T] {
 	q.builder.Where(condition, args...)
 	return q
 }
@@ -175,7 +177,7 @@ func (q *Query) Where(condition string, args ...interface{}) *Query {
 // Can be used in two ways:
 // 1. Pair-based: Update("name", "John", "age", 30)
 // 2. Struct-based: Table(User{Name: "John"}).Update().Where(...)
-func (q *Query) Update(args ...interface{}) *Query {
+func (q *Query[T]) Update(args ...interface{}) *Query[T] {
 	if len(args) == 0 {
 		// Struct-based update from Table()
 		if q.builder.model != nil {
@@ -199,14 +201,14 @@ func (q *Query) Update(args ...interface{}) *Query {
 }
 
 // Delete marks as delete query
-func (q *Query) Delete() *Query {
+func (q *Query[T]) Delete() *Query[T] {
 	q.builder.Delete()
 	return q
 }
 
 // Insert sets up an insert operation
 // If model is provided, use it; otherwise use the model from Table()
-func (q *Query) Insert(model ...interface{}) *Query {
+func (q *Query[T]) Insert(model ...interface{}) *Query[T] {
 	if len(model) > 0 {
 		q.builder.Insert(model[0])
 	} else if q.builder.model != nil {
@@ -217,25 +219,25 @@ func (q *Query) Insert(model ...interface{}) *Query {
 }
 
 // OrderBy adds ORDER BY clause
-func (q *Query) OrderBy(order string) *Query {
+func (q *Query[T]) OrderBy(order string) *Query[T] {
 	q.builder.OrderBy(order)
 	return q
 }
 
 // Limit sets LIMIT
-func (q *Query) Limit(limit int) *Query {
+func (q *Query[T]) Limit(limit int) *Query[T] {
 	q.builder.Limit(limit)
 	return q
 }
 
 // Offset sets OFFSET
-func (q *Query) Offset(offset int) *Query {
+func (q *Query[T]) Offset(offset int) *Query[T] {
 	q.builder.Offset(offset)
 	return q
 }
 
 // Pagination sets limit and offset
-func (q *Query) Pagination(limit, offset int) *Query {
+func (q *Query[T]) Pagination(limit, offset int) *Query[T] {
 	q.builder.Pagination(limit, offset)
 	return q
 }
@@ -244,7 +246,7 @@ func (q *Query) Pagination(limit, offset int) *Query {
 // Can accept either:
 // 1. Slice of structs: BulkInsert([]User{user1, user2, user3})
 // 2. Manual columns and rows: BulkInsert([]string{"name", "email"}, [][]interface{}{...})
-func (q *Query) BulkInsert(args ...interface{}) *Query {
+func (q *Query[T]) BulkInsert(args ...interface{}) *Query[T] {
 	q.builder.queryType = "bulkinsert"
 
 	if len(args) == 0 {
@@ -267,7 +269,7 @@ func (q *Query) BulkInsert(args ...interface{}) *Query {
 }
 
 // extractBulkFromModels extracts columns and rows from a slice of structs
-func (q *Query) extractBulkFromModels(models interface{}) {
+func (q *Query[T]) extractBulkFromModels(models interface{}) {
 	modelsValue := reflect.ValueOf(models)
 
 	if modelsValue.Kind() != reflect.Slice {
@@ -311,7 +313,7 @@ func (q *Query) extractBulkFromModels(models interface{}) {
 // action can be "nothing" (keep old value) or "update" (replace with new value)
 // Example: OnConflict("email", "nothing") - keep old value if email exists
 // Example: OnConflict("email", "update", "name", "updated_at") - update specific columns on conflict
-func (q *Query) OnConflict(conflictColumn string, action string, updateColumns ...string) *Query {
+func (q *Query[T]) OnConflict(conflictColumn string, action string, updateColumns ...string) *Query[T] {
 	q.builder.onConflict = conflictColumn
 	q.builder.conflictAction = action
 	q.builder.conflictUpdates = updateColumns
@@ -321,7 +323,7 @@ func (q *Query) OnConflict(conflictColumn string, action string, updateColumns .
 // Raw sets a raw SQL query for execution
 // Uses the table name (if set) for automatic routing
 // Example: norm.Table("users").Raw("SELECT * FROM users WHERE age > $1", 25)
-func (q *Query) Raw(query string, args ...interface{}) *Query {
+func (q *Query[T]) Raw(query string, args ...interface{}) *Query[T] {
 	q.rawSQL = query
 	q.rawArgs = args
 	
@@ -342,7 +344,7 @@ func (q *Query) Raw(query string, args ...interface{}) *Query {
 // Join creates a join context for raw SQL queries
 // This is a helper to set up join context without keys (for raw SQL only)
 // Example: norm.Join("users", "orders").Raw("SELECT u.*, o.* FROM users u JOIN orders o ON u.id = o.user_id")
-func (q *Query) Join(table1, table2 string) *Query {
+func (q *Query[T]) Join(table1, table2 string) *Query[T] {
 	q.joinContext = &JoinContext{
 		Tables: []string{table1, table2},
 		Keys:   []string{}, // No keys needed for raw SQL
@@ -354,7 +356,7 @@ func (q *Query) Join(table1, table2 string) *Query {
 
 // SetShard sets the explicit shard for raw SQL routing
 // This is used internally by norm.Raw()
-func (q *Query) SetShard(shard string) *Query {
+func (q *Query[T]) SetShard(shard string) *Query[T] {
 	q.rawShard = shard
 	return q
 }
@@ -362,7 +364,7 @@ func (q *Query) SetShard(shard string) *Query {
 // Cache enables caching for this query
 // ttl: Duration to cache the result. Default is 5 minutes if not specified.
 // keys: Optional cache keys (up to 2) for targeted invalidation
-func (q *Query) Cache(ttl time.Duration, keys ...string) *Query {
+func (q *Query[T]) Cache(ttl time.Duration, keys ...string) *Query[T] {
 	if len(keys) > 2 {
 		keys = keys[:2] // Limit to 2 keys
 	}
@@ -374,7 +376,7 @@ func (q *Query) Cache(ttl time.Duration, keys ...string) *Query {
 // generateCacheKey generates a unique cache key based on query and args
 // Format: part1:part2:...:hash
 // Joins all non-empty components (tables + keys) followed by the hash
-func (q *Query) generateCacheKey(query string, args []interface{}) string {
+func (q *Query[T]) generateCacheKey(query string, args []interface{}) string {
 	// Optimization: If explicit cache keys are provided, use them directly
 	// This allows checking cache BEFORE building the query logic
 	if len(q.cacheKeys) > 0 {
@@ -405,7 +407,7 @@ func (q *Query) generateCacheKey(query string, args []interface{}) string {
 }
 
 // checkCache checks if the query result is cached
-func (q *Query) checkCache(ctx context.Context, query string, args []interface{}) ([]byte, bool, error) {
+func (q *Query[T]) checkCache(ctx context.Context, query string, args []interface{}) ([]byte, bool, error) {
 	if q.cacheTTL == nil {
 		return nil, false, nil
 	}
@@ -429,7 +431,7 @@ func (q *Query) checkCache(ctx context.Context, query string, args []interface{}
 }
 
 // setCache stores the query result in cache
-func (q *Query) setCache(ctx context.Context, query string, args []interface{}, data interface{}) error {
+func (q *Query[T]) setCache(ctx context.Context, query string, args []interface{}, data interface{}) error {
 	if q.cacheTTL == nil {
 		return nil
 	}
@@ -452,7 +454,7 @@ func (q *Query) setCache(ctx context.Context, query string, args []interface{}, 
 
 // getPool determines which pool to use based on query type and table
 
-func (q *Query) getPool() (*driver.PGPool, error) {
+func (q *Query[T]) getPool() (*driver.PGPool, error) {
 	// Get registry info
 	info := registry.GetRegistryInfo()
 	mode := info["mode"].(string)
@@ -468,7 +470,7 @@ func (q *Query) getPool() (*driver.PGPool, error) {
 }
 
 // getGlobalPool gets pool for global mode
-func (q *Query) getGlobalPool(info map[string]interface{}) (*driver.PGPool, error) {
+func (q *Query[T]) getGlobalPool(info map[string]interface{}) (*driver.PGPool, error) {
 	poolsRaw := info["pools"].(map[string]interface{})
 	queryType := q.builder.queryType
 
@@ -538,7 +540,7 @@ func (q *Query) getGlobalPool(info map[string]interface{}) (*driver.PGPool, erro
 }
 
 // getShardPool gets pool for shard mode
-func (q *Query) getShardPool(info map[string]interface{}) (*driver.PGPool, error) {
+func (q *Query[T]) getShardPool(info map[string]interface{}) (*driver.PGPool, error) {
 	// Get table mapping
 	tableModel, exists := registry.GetModel(q.table)
 	if !exists {
@@ -615,7 +617,7 @@ func (q *Query) getShardPool(info map[string]interface{}) (*driver.PGPool, error
 
 // Exec executes the query (for INSERT, UPDATE, DELETE)
 // Context is optional - if not provided, uses context.Background()
-func (q *Query) Exec(ctx ...context.Context) (int64, error) {
+func (q *Query[T]) Exec(ctx ...context.Context) (int64, error) {
 	// Use provided context or default to Background
 	execCtx := context.Background()
 	if len(ctx) > 0 {
@@ -646,7 +648,7 @@ func (q *Query) Exec(ctx ...context.Context) (int64, error) {
 // Return executes an INSERT query and returns the populated model
 // Usage: user, err := norm.Table(user).Insert().Return()
 // Return("id", "name") only populates specified fields
-func (q *Query) Return(cols ...string) (interface{}, error) {
+func (q *Query[T]) Return(cols ...string) (T, error) {
 	// Use provided context if any, else Background
 	execCtx := context.Background()
 
@@ -656,35 +658,38 @@ func (q *Query) Return(cols ...string) (interface{}, error) {
 	// 2. Build query
 	sql, args, err := q.builder.Build()
 	if err != nil {
-		return nil, err
+		return q.model, err
 	}
 
 	// 3. Get pool
 	pool, err := q.getPool()
 	if err != nil {
-		return nil, err
+		return q.model, err
 	}
 
 	return q.executeWithReturn(execCtx, sql, args, pool)
 }
 
 // executeWithReturn handles the actual execution and scanning for Return()
-func (q *Query) executeWithReturn(ctx context.Context, sql string, args []interface{}, pool *driver.PGPool) (interface{}, error) {
+func (q *Query[T]) executeWithReturn(ctx context.Context, sql string, args []interface{}, pool *driver.PGPool) (T, error) {
 	rows, err := pool.Pool.Query(ctx, sql, args...)
 	if err != nil {
-		return nil, fmt.Errorf("insert with return failed: %w", err)
+		return q.model, fmt.Errorf("insert with return failed: %w", err)
 	}
 	defer rows.Close()
 
-	if err := scanRowsToDest(rows, q.model); err != nil {
-		return nil, err
+	// Important: Scan directly into q.model
+	// scanRowsToDest expects a pointer to the destination.
+	// Since q.model is T, we pass its address &q.model.
+	if err := scanRowsToDest(rows, &q.model); err != nil {
+		return q.model, err
 	}
 
 	return q.model, nil
 }
 
 // First executes query and returns first row
-func (q *Query) First(ctx context.Context, dest interface{}) error {
+func (q *Query[T]) First(ctx context.Context, dest interface{}) error {
 	if q.rawSQL != "" {
 		return q.executeRaw(ctx, dest, true)
 	}
@@ -695,7 +700,7 @@ func (q *Query) First(ctx context.Context, dest interface{}) error {
 }
 
 // All executes query and returns all rows
-func (q *Query) All(ctx context.Context, dest interface{}) error {
+func (q *Query[T]) All(ctx context.Context, dest interface{}) error {
 	// Optimization: Check cache explicitly BEFORE building query
 	// This works if explicit cache keys are provided via .Cache()
 	if len(q.cacheKeys) > 0 && q.cacheTTL != nil {
@@ -725,7 +730,7 @@ func (q *Query) All(ctx context.Context, dest interface{}) error {
 
 
 // All executes query and returns all rows
-func (q *Query) Batch(ctx context.Context, dest interface{}) error {
+func (q *Query[T]) Batch(ctx context.Context, dest interface{}) error {
 	// Optimization: Check cache explicitly BEFORE building query
 	// This works if explicit cache keys are provided via .Cache()
 	if len(q.cacheKeys) > 0 && q.cacheTTL != nil {
@@ -755,7 +760,7 @@ func (q *Query) Batch(ctx context.Context, dest interface{}) error {
 
 
 // executeRaw executes a raw SQL query with proper routing
-func (q *Query) executeRaw(ctx context.Context, dest interface{}, singleRow bool) error {
+func (q *Query[T]) executeRaw(ctx context.Context, dest interface{}, singleRow bool) error {
 	var pool *driver.PGPool
 	var err error
 
@@ -851,7 +856,7 @@ func (q *Query) executeRaw(ctx context.Context, dest interface{}, singleRow bool
 }
 
 // getPoolForShard gets a pool for an explicit shard name
-func (q *Query) getPoolForShard(shardName string) (*driver.PGPool, error) {
+func (q *Query[T]) getPoolForShard(shardName string) (*driver.PGPool, error) {
 	info := registry.GetRegistryInfo()
 	mode := info["mode"].(string)
 	
@@ -885,7 +890,7 @@ func (q *Query) getPoolForShard(shardName string) (*driver.PGPool, error) {
 }
 
 // getPoolForTable gets a pool for a specific table name
-func (q *Query) getPoolForTable(tableName string) (*driver.PGPool, error) {
+func (q *Query[T]) getPoolForTable(tableName string) (*driver.PGPool, error) {
 	// Temporarily set table and use existing getPool logic
 	originalTable := q.table
 	q.table = tableName
@@ -895,7 +900,7 @@ func (q *Query) getPoolForTable(tableName string) (*driver.PGPool, error) {
 }
 
 // executeStandard executes a standard single-table query
-func (q *Query) executeStandard(ctx context.Context, dest interface{}, singleRow bool) error {
+func (q *Query[T]) executeStandard(ctx context.Context, dest interface{}, singleRow bool) error {
 	pool, err := q.getPool()
 	if err != nil {
 		return err
@@ -967,7 +972,7 @@ func (q *Query) executeStandard(ctx context.Context, dest interface{}, singleRow
 }
 
 // printResults prints query results to stdout
-func (q *Query) printResults(results []map[string]interface{}, fromCache bool) {
+func (q *Query[T]) printResults(results []map[string]interface{}, fromCache bool) {
 	source := "DB"
 	if fromCache {
 		source = "CACHE"
@@ -1023,7 +1028,7 @@ func scanRowsToMap(rows pgx.Rows) ([]map[string]interface{}, error) {
 }
 
 // executeJoin executes a join query (either native or app-side)
-func (q *Query) executeJoin(ctx context.Context, dest interface{}, singleRow bool) error {
+func (q *Query[T]) executeJoin(ctx context.Context, dest interface{}, singleRow bool) error {
 	if len(q.joinContext.Tables) < 2 {
 		return fmt.Errorf("join requires at least 2 tables")
 	}
@@ -1059,7 +1064,7 @@ func (q *Query) executeJoin(ctx context.Context, dest interface{}, singleRow boo
 }
 
 // isCoLocated checks if all tables in the join context are on the same database/shard
-func (q *Query) isCoLocated() (bool, error) {
+func (q *Query[T]) isCoLocated() (bool, error) {
 	info := registry.GetRegistryInfo()
 	mode := info["mode"].(string)
 
@@ -1124,7 +1129,7 @@ func (q *Query) isCoLocated() (bool, error) {
 }
 
 // executeAppSideJoin executes a join by fetching data from multiple sources and merging
-func (q *Query) executeAppSideJoin(ctx context.Context, dest interface{}, singleRow bool) error {
+func (q *Query[T]) executeAppSideJoin(ctx context.Context, dest interface{}, singleRow bool) error {
 	debugLog("Executing App-Side Join (Distributed/Skey)")
 
 	// Generate a pseudo-query for cache key generation
@@ -1257,7 +1262,7 @@ func (q *Query) executeAppSideJoin(ctx context.Context, dest interface{}, single
 		cols2 = []string{"*"}
 	}
 
-	q2 := &Query{
+	q2 := &Query[any]{
 		builder: &QueryBuilder{
 			tableName: t2,
 			columns:   cols2,
@@ -1410,7 +1415,7 @@ func (q *Query) executeAppSideJoin(ctx context.Context, dest interface{}, single
 
 // Count executes a COUNT query
 // Context is optional - if not provided, uses context.Background()
-func (q *Query) Count(ctx ...context.Context) (int64, error) {
+func (q *Query[T]) Count(ctx ...context.Context) (int64, error) {
 	// Use provided context or default to Background
 	execCtx := context.Background()
 	if len(ctx) > 0 {

@@ -10,7 +10,7 @@ import (
 
 // InvalidateCache - Strict mode: invalidates a specific scope defined by table and keys.
 // Pattern: *<table>*<key1>:<key2>*
-func (q *Query) InvalidateCache(keys ...string) *Query {
+func (q *Query[T]) InvalidateCache(keys ...string) *Query[T] {
 	if len(keys) == 0 {
 		panic("InvalidateCache requires at least one key")
 	}
@@ -36,7 +36,7 @@ func (q *Query) InvalidateCache(keys ...string) *Query {
 
 // InvalidateCacheReferenced - Referenced mode: invalidates broadly by referenced key.
 // Pattern: *<key>*
-func (q *Query) InvalidateCacheReferenced(keys ...string) *Query {
+func (q *Query[T]) InvalidateCacheReferenced(keys ...string) *Query[T] {
 	if len(keys) == 0 {
 		panic("InvalidateCacheReferenced requires at least one key")
 	}

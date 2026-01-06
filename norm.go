@@ -74,8 +74,8 @@ func RegisterTable(model interface{}, tableName ...string) *registry.TableModel 
 // WithCache creates a query context with caching enabled.
 // Use this to check cache BEFORE building the query logic.
 // Usage: norm.WithCache(time.Minute, "key").Table(...)
-func WithCache(ttl time.Duration, keys ...string) *engine.Query {
-	q := &engine.Query{}
+func WithCache(ttl time.Duration, keys ...string) *engine.Query[any] {
+	q := &engine.Query[any]{}
 	return q.Cache(ttl, keys...)
 }
 
@@ -85,9 +85,18 @@ func WithCache(ttl time.Duration, keys ...string) *engine.Query {
 //	norm.Table("users").Select("id", "name", "email")  // String-based
 //	norm.Table(User{Name: "John", Email: "john@example.com"}).Insert()  // Struct-based (ignores zero values)
 //	norm.Table("users", "id", "orders", "user_id") // Join syntax
-func Table(args ...interface{}) *engine.Query {
-	q := &engine.Query{}
+func Table(args ...interface{}) *engine.Query[any] {
+	q := &engine.Query[any]{}
 	return q.Table(args...)
+}
+
+// Model creates a type-safe query builder for a specific model
+// Usage:
+//
+//	user, err := norm.Model(User{...}).Insert().Return()
+func Model[T any](model T) *engine.Query[T] {
+	q := &engine.Query[T]{}
+	return q.From(model)
 }
 
 // BulkInsert creates a bulk insert builder from model
@@ -103,8 +112,8 @@ func BulkInsert(model interface{}, columns []string, rows [][]interface{}) *engi
 //
 //	norm.Raw("SELECT custom_function()", "shard1")
 //	norm.Raw("SELECT * FROM users WHERE age > $1", "shard1", 25)
-func Raw(query string, shard string, args ...interface{}) *engine.Query {
-	q := &engine.Query{}
+func Raw(query string, shard string, args ...interface{}) *engine.Query[any] {
+	q := &engine.Query[any]{}
 	q.Raw(query, args...)
 	// Set the explicit shard for routing
 	// We need to access the internal field, so we'll use a helper
@@ -113,7 +122,7 @@ func Raw(query string, shard string, args ...interface{}) *engine.Query {
 
 // setRawShard is a helper to set the rawShard field
 // This is a workaround since rawShard is unexported
-func setRawShard(q *engine.Query, shard string) *engine.Query {
+func setRawShard[T any](q *engine.Query[T], shard string) *engine.Query[T] {
 	// We need to export a method in engine.Query to set this
 	// For now, let's add a SetShard method to Query
 	return q.SetShard(shard)
@@ -124,8 +133,8 @@ func setRawShard(q *engine.Query, shard string) *engine.Query {
 // Usage:
 //
 //	norm.Join("users", "orders").Raw("SELECT u.*, o.* FROM users u JOIN orders o ON u.id = o.user_id")
-func Join(table1, table2 string) *engine.Query {
-	q := &engine.Query{}
+func Join(table1, table2 string) *engine.Query[any] {
+	q := &engine.Query[any]{}
 	return q.Join(table1, table2)
 }
 
